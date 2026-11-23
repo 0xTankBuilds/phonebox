@@ -125,6 +125,10 @@ news feeds get categories and OPML import, and Antigravity chats can show in the
   the widget is on screen (#348, #226, [M00n-of-saturn](https://github.com/M00n-of-saturn)).
 
 **Agent**
+- Pi agent sessions in the AI sessions widget: model, thinking level, last tool, token counters, the current context
+  size and the context window (when Pi's model store knows it), and whether a turn is running. Off by default
+  (**Settings › General › Pi sessions**), and session titles reach the phone only with their own switch on. The agent
+  reads the local session files for their metadata only; prompts, replies and tool arguments are never kept or sent.
 - Antigravity chats in the AI sessions widget, from the IDE and the CLI: model, last tool, token counts and whether a
   turn is running. Off by default (**Settings › General › Antigravity sessions**), and chat titles reach the phone only
   with their own switch on. The agent reads the local transcripts for their step metadata only; prompts, replies and

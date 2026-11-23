@@ -21,6 +21,8 @@
   "discord": { "enabled": false, "clientId": null, "clientSecret": null, "allowControl": false, "screenShare": false },
   // Cursor agent chats on the AI sessions widget (off by default)
   "cursor": { "sessions": false },
+  // Pi agent sessions on the AI sessions widget (off by default); "shareSessionTitles" shows each session's Pi-written title
+  "pi": { "sessions": false, "shareSessionTitles": false },
   // Antigravity chats on the AI sessions widget (off by default)
   "antigravity": { "sessions": false, "shareSessionTitles": false },
   // Live Codex quotas read through the Codex CLI (off by default; Settings › General › AI quotas & CodexBar)
