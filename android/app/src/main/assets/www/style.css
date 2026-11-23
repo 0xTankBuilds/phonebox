@@ -1542,3 +1542,10 @@ body.controls-top .ap-foot { order: -1; margin-bottom: 4px; }
 .ly-note[hidden] { display: none; }
 .w-lyrics:not(.timed):not(.plain) .ly-note { margin: auto; }
 .ly-credit { position: absolute; right: 10px; top: 9px; font-size: 9px; letter-spacing: .1em; color: var(--dim); }
+
+/* llama-swap widget: the local LLM router's loaded models and usage */
+.ls-list { flex: 1; display: grid; gap: 8px; overflow-y: auto; align-content: start; padding: 2px 0; }
+.ls-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+.ls-k { color: var(--muted); flex: none; }
+.ls-v { color: var(--text); text-align: right; word-break: break-word; }
+.ls-model { font-size: 13px; font-weight: 600; word-break: break-word; padding: 2px 0; }

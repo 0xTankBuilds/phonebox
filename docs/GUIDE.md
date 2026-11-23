@@ -312,6 +312,12 @@ record is a prompt, a tool result, or an assistant reply that carries a tool cal
 with a stop, an abort, or an error — the usual buzz and "session finished" toast apply. Session titles reach the phone
 only when **Show Pi session titles on the phone** is also on.
 
+The llama-swap stats widget (opt-in: **Settings › General › llama-swap stats**, off by default) shows the local
+[llama-swap](https://github.com/lewtun/llama-swap) router: which models are currently loaded, requests and tokens
+today and in total, the generation speed (p50 tok/s) and the time of the last request. Point the **Server address**
+field at the router (e.g. `http://127.0.0.1:8080`); the agent polls it every minute, and only counters and model
+names reach the phone — no prompts, requests or responses.
+
 OpenCode's agent questions work the same way: when the agent asks "route A, B or C, or type your own", the phone
 shows the choices as buttons (and a text field when a custom answer is allowed) and sends the pick back. Questions
 without tappable answers, and Claude Code's own questions, are shown for information only — they are answered at

@@ -800,6 +800,32 @@ W.sessions = {
   },
 };
 
+W['llama-swap'] = {
+  needs: ['llamaswap', 'tick'],
+  create(box) {
+    const tok = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+    const row = (k, v) => h('div', 'ls-row', h('span', 'ls-k', k), h('span', 'ls-v', v));
+    const list = h('div', 'ls-list');
+    box.append(list);
+    box.style.setProperty('--c', '#7d9c85');
+    return {
+      needs: W['llama-swap'].needs,
+      update() {
+        const d = D.llamaswap;
+        if (!d) { list.replaceChildren(h('div', 'empty', tp('Set the server address in Settings › General › llama-swap.'))); return; }
+        if (!d.connected) { list.replaceChildren(h('div', 'empty', tp('llama-swap is offline.'))); return; }
+        const kids = [];
+        for (const m of d.loadedModels || []) kids.push(h('div', 'ls-model', m));
+        kids.push(row(tp('Today'), `${d.todayRequests ?? '—'} · ${tok(d.todayInputTokens)} in / ${tok(d.todayOutputTokens)} out`));
+        kids.push(row(tp('Total'), `${d.totalRequests ?? '—'} · ${tok(d.totalInputTokens)} in / ${tok(d.totalOutputTokens)} out`));
+        if (d.genTps50 != null) kids.push(row(tp('Speed'), d.genTps50.toFixed(1) + ' tok/s (p50)'));
+        if (d.lastRequestAt) { const last = Date.parse(d.lastRequestAt); kids.push(row(tp('Last request'), Number.isNaN(last) ? '—' : Date.now() - last < 60_000 ? tp('just now') : shortDur(Date.now() - last) + ' ' + tp('ago'))); }
+        list.replaceChildren(...kids);
+      },
+    };
+  },
+};
+
 W.github = {
   needs: ['work'],
   create(box) {

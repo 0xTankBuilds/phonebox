@@ -81,6 +81,7 @@ builder.Services.AddSingleton<SpectrumAnalyzer>();
 AddMonitor<SystemMonitor>(builder.Services);
 AddMonitor<MediaMonitor>(builder.Services);
 AddMonitor<QuotaMonitor>(builder.Services);
+AddMonitor<LlamaSwapMonitor>(builder.Services);
 AddMonitor<ProcessMonitor>(builder.Services);
 AddMonitor<SessionMonitor>(builder.Services);
 AddMonitor<OpenCodeApprovals>(builder.Services);
@@ -997,6 +998,7 @@ app.MapPost("/api/volume", (int? level, string? op, AudioControl audio) =>
 });
 
 app.MapGet("/api/quotas", (QuotaMonitor q) => Results.Json(new { providers = q.Snapshot(), overview = q.Overview() }));
+app.MapGet("/api/llamaswap", (LlamaSwapMonitor m) => Results.Json(m.Snapshot()));
 
 app.MapGet("/api/work", (SessionMonitor s, GitHubMonitor gh) => Results.Json(WorkFeed.Build(s, gh)));
 

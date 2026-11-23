@@ -25,6 +25,8 @@ public sealed class AgentConfig
     public PiConfig Pi { get; set; } = new();
     /// <summary>Antigravity chats on the AI sessions widget (off by default).</summary>
     public AntigravityConfig Antigravity { get; set; } = new();
+    /// <summary>Usage stats of the local llama-swap LLM router; off until its address is entered.</summary>
+    public LlamaSwapConfig LlamaSwap { get; set; } = new();
     /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
     [JsonPropertyName("opencode")]
     public OpenCodeConfig OpenCode { get; set; } = new();
@@ -689,6 +691,7 @@ public sealed partial class ConfigStore(string path)
         c.Pi ??= new();
         c.Antigravity ??= new();
         c.OpenCode ??= new();
+        c.LlamaSwap ??= new();
         c.OpenCode.TimeoutSec = Math.Clamp(c.OpenCode.TimeoutSec, 10, 3600);
         c.OpenCode.AlwaysCountdownSec = Math.Clamp(c.OpenCode.AlwaysCountdownSec, 0, 60);
         if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = "ersinkoc/phonebox";
@@ -1031,6 +1034,18 @@ public sealed partial class ConfigStore(string path)
 
     [GeneratedRegex("^[a-z0-9]{6,32}$")]
     private static partial Regex CameraId();
+}
+
+/// <summary>
+/// The llama-swap server (the local LLM router): where it listens and how often it is polled. Nothing runs and
+/// nothing is polled while the address is empty.
+/// </summary>
+public sealed class LlamaSwapConfig
+{
+    /// <summary>The server address, e.g. <c>http://127.0.0.1:8080</c> (empty = off).</summary>
+    public string Url { get; set; } = "";
+    /// <summary>How often the server is polled, in seconds (10 to 3600).</summary>
+    public int RefreshSeconds { get; set; } = 60;
 }
 
 public sealed class CodexBarConfig

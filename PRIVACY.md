@@ -63,6 +63,12 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
   stored or sent. The model context window, when known, is read from Pi's own model store
   (`~/.pi/agent/models-store.json`). Titles reach the phone only while **Show Pi session titles on the phone** is
   also on. Turning the setting off stops the scan.
+- **llama-swap stats** (off by default; **Settings › General › llama-swap stats**): while a server address is set, the
+  agent asks the [llama-swap](https://github.com/lewtun/llama-swap) router you point it at (its `/api/version`,
+  `/v1/models`, `/api/metrics/stats` and `/api/metrics/activity` endpoints) every minute. Only the counters it returns
+  — requests and tokens today and in total, generation speed, the loaded model names and the time of the last request
+  — are kept for the panel; prompts, requests and responses are never read, stored or sent. Clearing the address stops
+  the polling.
 - **OpenCode sessions (off by default):** with Settings › General › "Show OpenCode sessions" on, the agent asks
   OpenCode's own background service — the native one, and the one inside each running WSL distro — for its recent
   sessions: the same local HTTP API the desktop app uses, authenticated with the password OpenCode wrote to

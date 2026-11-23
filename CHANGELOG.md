@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+**Widgets**
+- llama-swap: a widget for the local [llama-swap](https://github.com/lewtun/llama-swap) router — which models are
+  currently loaded, requests and tokens today and in total, the generation speed (p50 tok/s) and the time of the
+  last request. Off by default; point **Settings › General › llama-swap stats** at the server (e.g.
+  `http://127.0.0.1:8080`) to switch it on. Only counters and model names are sent to the phone — no prompts,
+  requests or responses.
+
 ## 0.9.28 — 2026-11-23
 
 Faster page switching (tap or slide along the page dots, a page bar with names, a Page buttons widget), Discord
