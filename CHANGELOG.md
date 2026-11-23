@@ -3,11 +3,27 @@
 ## Unreleased
 
 **Widgets**
+- Discord: a large widget has larger mute, deafen and other buttons, member names and avatars, readable and easy to
+  hit on a phone on a stand. Sizes follow the widget's size; at the usual sizes nothing changes (#420,
+  [noswear922](https://github.com/noswear922)).
 - llama-swap: a widget for the local [llama-swap](https://github.com/lewtun/llama-swap) router — which models are
   currently loaded, requests and tokens today and in total, the generation speed (p50 tok/s) and the time of the
   last request. Off by default; point **Settings › General › llama-swap stats** at the server (e.g.
   `http://127.0.0.1:8080`) to switch it on. Only counters and model names are sent to the phone — no prompts,
   requests or responses.
+
+**Agent**
+- Windows: the CPU temperature from LibreHardwareMonitor no longer drops out on a busy computer. The agent waited
+  only 600 ms for its answer and blanked the temperature for 30 s after each slow one; it now waits 2 s and keeps
+  the last reading through a couple of slow answers (#442, [joaoschlickmann](https://github.com/joaoschlickmann)).
+- macOS: Now playing names YouTube Music installed as a Chrome app, instead of showing the app's 32-letter ID; other
+  Chrome apps show as Chrome (#443, [collorjune-svg](https://github.com/collorjune-svg)).
+
+**Android app**
+- A mouse shared from the computer (Input Leaf with Deskflow or Barrier) can click, drag and long-press in the panel.
+  The main button now acts as a finger, so a drag also swipes between pages; the WebView ignored these mice's
+  clicks before. Plugging in or removing a keyboard (Input Leaf adds one each time the mouse arrives) no longer
+  restarts the panel (#425, [nonchita100](https://github.com/nonchita100)).
 
 ## 0.9.28 — 2026-11-23
 
