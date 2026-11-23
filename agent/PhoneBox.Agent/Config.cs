@@ -21,6 +21,8 @@ public sealed class AgentConfig
     public ClaudeConfig Claude { get; set; } = new();
     /// <summary>Cursor agent-transcript sessions on the AI sessions widget (off by default).</summary>
     public CursorConfig Cursor { get; set; } = new();
+    /// <summary>Pi agent sessions on the AI sessions widget (off by default).</summary>
+    public PiConfig Pi { get; set; } = new();
     /// <summary>Antigravity chats on the AI sessions widget (off by default).</summary>
     public AntigravityConfig Antigravity { get; set; } = new();
     /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
@@ -268,6 +270,15 @@ public sealed class CursorConfig
 {
     /// <summary>Show recent Cursor agent chats on the AI sessions widget (off by default).</summary>
     public bool Sessions { get; set; }
+}
+
+public sealed class PiConfig
+{
+    /// <summary>Show recent Pi agent sessions on the AI sessions widget (off by default, like Cursor's).</summary>
+    public bool Sessions { get; set; }
+    /// <summary>Show each Pi session's title on the phone. The title is the name Pi wrote for the session, so it
+    /// stays off the phone until you turn it on, like Antigravity's.</summary>
+    public bool ShareSessionTitles { get; set; }
 }
 
 public sealed class AntigravityConfig
@@ -675,6 +686,7 @@ public sealed partial class ConfigStore(string path)
         c.Claude ??= new();
         c.Claude.TimeoutSec = Math.Clamp(c.Claude.TimeoutSec, 10, 3600);
         c.Cursor ??= new();
+        c.Pi ??= new();
         c.Antigravity ??= new();
         c.OpenCode ??= new();
         c.OpenCode.TimeoutSec = Math.Clamp(c.OpenCode.TimeoutSec, 10, 3600);

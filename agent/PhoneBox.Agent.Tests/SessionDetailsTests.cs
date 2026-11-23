@@ -518,5 +518,202 @@ public sealed class SessionDetailsTests : IDisposable
         fi.Refresh();
         Assert.True(monitor.HasCachedAntigravityDetails(file, fi.LastWriteTimeUtc, fi.Length));
     }
+    // ---------------------------------------------------------------- Pi sessions
+    private string WritePiSession(string id, string lines, DateTime? writeUtc = null)
+    {
+        var dir = Path.Combine(_root, ".pi", "agent", "sessions", "--home-test-work-phonebox--");
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "2026-11-01T00-00-00-000Z_" + id + ".jsonl");
+        File.WriteAllText(file, lines);
+        if (writeUtc is { } wt) File.SetLastWriteTimeUtc(file, wt);
+        return file;
+    }
+
+    private static string PiMsg(string role, object? msg = null, string? ts = null)
+        => JsonSerializer.Serialize(new { type = "message", timestamp = ts ?? DateTimeOffset.UtcNow.AddSeconds(-10).ToString("O"), message = msg ?? new { role } });
+
+    [Fact]
+    public void Pi_ConfigDefaultsOff_AreNormalized()
+    {
+        var cfg = new AgentConfig();
+        Assert.False(cfg.Pi.Sessions);
+        Assert.False(cfg.Pi.ShareSessionTitles);
+
+        var path = Path.Combine(_root, "pi-cfg.json");
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(path, """{"pi":null}""");
+        var store = new ConfigStore(path);
+        var loaded = store.Get();
+        Assert.NotNull(loaded.Pi);
+        Assert.False(loaded.Pi.Sessions);
+        Assert.False(loaded.Pi.ShareSessionTitles);
+    }
+
+    [Fact]
+    public void Pi_CompletedTurn_ReportsStatsWithoutLeakingPromptsOrArgs()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "11111111-aaaa-bbbb-cccc-222222222222";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-6).ToString("O");
+        var t1 = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O");
+        var t2 = DateTimeOffset.UtcNow.AddSeconds(-20).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/phonebox"}""" + "\n" +
+            $$$"""{"type":"model_change","id":"a1","timestamp":"{{{t0}}}","provider":"llama-swap","modelId":"local-7b"}""" + "\n" +
+            $$$"""{"type":"thinking_level_change","id":"a2","timestamp":"{{{t0}}}","thinkingLevel":"medium"}""" + "\n" +
+            $$$"""{"type":"message","id":"a3","timestamp":"{{{t1}}}","message":{"role":"user","content":"PRIVATE PROMPT"}}""" + "\n" +
+            $$$"""{"type":"message","id":"a4","timestamp":"{{{t2}}}","message":{"role":"assistant","model":"local-7b","thinkingLevel":"medium","usage":{"input":100,"output":40,"cacheRead":500,"cacheWrite":10,"reasoning":20,"totalTokens":670},"stopReason":"toolUse","content":[{"type":"toolCall","name":"read","arguments":{"path":"PRIVATE_ARG"}}]}}""" + "\n" +
+            $$$"""{"type":"message","id":"a5","timestamp":"{{{t2}}}","message":{"role":"toolResult","toolName":"read","content":"PRIVATE RESULT"}}""" + "\n" +
+            $$$"""{"type":"message","id":"a6","timestamp":"{{{t2}}}","message":{"role":"assistant","model":"local-7b","thinkingLevel":"medium","usage":{"input":2,"output":30,"cacheRead":660,"cacheWrite":0,"reasoning":0,"totalTokens":692},"stopReason":"stop","content":[{"type":"text","text":"PRIVATE REPLY"}]}}""" + "\n");
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        Assert.Equal("pi:" + id, s.Id);
+        Assert.Equal("pi", s.Tool);
+        Assert.Equal("phonebox", s.Project);
+        Assert.Equal("phonebox-1111", s.Name);
+        Assert.Equal("idle", s.Status);
+        Assert.Equal("completed", s.Outcome);
+        Assert.Equal("local-7b", s.Model);
+        Assert.Equal("medium", s.Effort);
+        Assert.Equal(1272, s.LastInputTokens);     // input + cache reads + cache writes
+        Assert.Equal(112, s.InputTokens);          // 100 + 2 + 10 cache writes
+        Assert.Equal(70, s.OutputTokens);
+        Assert.Equal(1160, s.CachedInputTokens);
+        Assert.Equal(20, s.ReasoningTokens);
+        Assert.Equal(1362, s.TotalTokens);
+        Assert.Equal("read", s.LastTool);
+        Assert.Null(s.TurnStartedAt);              // the turn is over
+        Assert.Null(s.ContextWindow);              // the provider is not in the model store
+        Assert.Null(s.Title);
+
+        var serialized = JsonSerializer.Serialize(s);
+        Assert.DoesNotContain("PRIVATE", serialized);
+    }
+
+    [Fact]
+    public void Pi_OpenTurn_IsBusyAndFollowsAppendsUntilTheStopReasonClosesIt()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "33333333-aaaa-bbbb-cccc-444444444444";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        var t1 = DateTimeOffset.UtcNow.AddSeconds(-20).ToString("O");
+        var file = WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/phonebox"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t1}}}","message":{"role":"user","content":"go"}}""" + "\n",
+            writeUtc: DateTimeOffset.UtcNow.AddSeconds(-20).UtcDateTime);
+
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        var open = Assert.Single(monitor.ReadPi(root));
+        Assert.Equal("busy", open.Status);
+        Assert.Null(open.Outcome);
+        Assert.NotNull(open.TurnStartedAt);
+        var fi = new FileInfo(file);
+        Assert.True(monitor.HasCachedPiDetails(file, fi.LastWriteTimeUtc, fi.Length));
+
+        File.AppendAllText(file, PiMsg("assistant", new { role = "assistant", model = "m", usage = new { input = 5, output = 7, cacheRead = 0, cacheWrite = 0, reasoning = 0, totalTokens = 12 }, stopReason = "stop" }) + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-5));
+
+        var closed = Assert.Single(monitor.ReadPi(root));
+        Assert.Equal("idle", closed.Status);
+        Assert.Equal("completed", closed.Outcome);
+        Assert.Equal(12, closed.TotalTokens);
+    }
+
+    [Fact]
+    public void Pi_AbortedAndErrorStops_ReportTheOutcome()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+
+        var abortedId = "55555555-aaaa-bbbb-cccc-666666666666";
+        WritePiSession(abortedId,
+            $$$"""{"type":"session","version":3,"id":"{{{abortedId}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/a"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","stopReason":"aborted","content":[]}}""" + "\n");
+
+        var failedId = "77777777-aaaa-bbbb-cccc-888888888888";
+        WritePiSession(failedId,
+            $$$"""{"type":"session","version":3,"id":"{{{failedId}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/b"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","stopReason":"error","content":[]}}""" + "\n");
+
+        var sessions = monitor.ReadPi(root).ToList();
+        Assert.Equal("aborted", Assert.Single(sessions, x => x.Id == "pi:" + abortedId).Outcome);
+        Assert.Equal("failed", Assert.Single(sessions, x => x.Id == "pi:" + failedId).Outcome);
+    }
+
+    [Fact]
+    public void Pi_BashExecutionAfterTheStop_DoesNotReopenTheTurn()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "99999999-aaaa-bbbb-cccc-000000000000";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/c"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","stopReason":"stop","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":2},"content":[]}}""" + "\n" +
+            PiMsg("bashExecution", null) + "\n");
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        Assert.Equal("idle", s.Status);
+        Assert.Equal("completed", s.Outcome);
+    }
+
+    [Fact]
+    public void Pi_Title_IsSharedOnlyWhenAskedFor()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var offMonitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/d"}""" + "\n" +
+            $$$"""{"type":"session_info","timestamp":"{{{t0}}}","name":"Fix the flaky test"}""" + "\n");
+
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        Assert.Equal("Fix the flaky test", Assert.Single(monitor.ReadPi(root, titles: true)).Title);
+        Assert.Null(Assert.Single(offMonitor.ReadPi(root)).Title);
+    }
+
+    [Fact]
+    public void Pi_ContextWindow_ComesFromPiOwnModelStore()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".pi", "agent"));
+        File.WriteAllText(Path.Combine(_root, ".pi", "agent", "models-store.json"),
+            """{"llama-swap":{"local-7b":{"contextWindow":32768}}}""");
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/e"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"local-7b","provider":"llama-swap","stopReason":"stop","content":[]}}""" + "\n");
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        Assert.Equal(32768, s.ContextWindow);
+
+        // a provider the store does not know keeps the context size without a window
+        Assert.True(SessionMonitor.ContextWindows(Path.Combine(_root, "no-such-store.json")).Count == 0);
+    }
+
+    [Fact]
+    public void Pi_TrailingPartialRecord_IsFinishedOnTheNextRead()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        var file = WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/f"}""" + "\n");
+
+        var line = PiMsg("assistant", new { role = "assistant", model = "m", stopReason = "stop", content = Array.Empty<object>() });
+        var half = line.Length / 2;
+        File.AppendAllText(file, line[..half]);
+        var before = monitor.ReadPi(root).ToList();
+        Assert.Single(before);
+        Assert.Null(before[0].Outcome);              // the assistant record is not complete yet
+
+        File.AppendAllText(file, line[half..] + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+        Assert.Equal("completed", Assert.Single(monitor.ReadPi(root)).Outcome);
+    }
+
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }
