@@ -107,6 +107,17 @@ test('llama-swap re-seeds a reused request id after the router restarts', async 
   await expect(page.locator('.ls-hero-t')).toHaveText('1s', { timeout: 3000 });
 });
 
+test('llama-swap re-seeds a reused id even when the restart drop is under fifteen seconds', async ({ page }) => {
+  await open(page);
+  // id 7 has been in flight for ten seconds
+  await llamaswap(page, { ...connected, inflightRequests: [{ id: '7', model: 'Qwen3.8-27B-GGUF', elapsedMs: 10_000 }] });
+  await expect(page.locator('.ls-hero-t')).toHaveText('10s');
+  // the router restarted and renumbered: the same id is a new request again at 500 ms. The drop is smaller than
+  // a whole second of local growth can explain, so only the per-id server value - not a local comparison - catches it
+  await llamaswap(page, { ...connected, inflightRequests: [{ id: '7', model: 'Qwen3.8-27B-GGUF', elapsedMs: 500 }] });
+  await expect(page.locator('.ls-hero-t')).toHaveText('1s', { timeout: 3000 });
+});
+
 test('llama-swap pins the today row to the bottom and marks the numbers with + when capped', async ({ page }) => {
   await open(page);
   await llamaswap(page, connected);

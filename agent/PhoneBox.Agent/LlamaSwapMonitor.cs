@@ -65,6 +65,13 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
     internal static readonly TimeSpan MaxStreamLifetime = TimeSpan.FromMinutes(10);
     /// <summary>For tests: the per-connection lifetime the stream gives up after.</summary>
     internal TimeSpan StreamLifetime { get; init; } = MaxStreamLifetime;
+    /// <summary>The longest the wait for the /api/events response headers before giving up: a server that
+    /// accepts the connection and sends nothing would otherwise hold the stream loop until the whole lifetime
+    /// runs out, and an address change could not reach the wait either (the active read is not registered
+    /// before the headers arrive).</summary>
+    internal static readonly TimeSpan MaxHeaderWait = TimeSpan.FromSeconds(15);
+    /// <summary>For tests: the deadline the wait for the stream's response headers gives up after.</summary>
+    internal TimeSpan HeaderWait { get; init; } = MaxHeaderWait;
 
     private HttpClient? _http;
     private HttpClient Http => _http ??= NewHttpClient(HttpHandler);
@@ -133,7 +140,7 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (config is null) return; // tests drive RefreshAsync directly
-        await Task.WhenAll(PollLoopAsync(stoppingToken), StreamLoopAsync(stoppingToken));
+        await Task.WhenAll(PollLoopAsync(stoppingToken), StreamLoopAsync(stoppingToken), AddressWatchAsync(stoppingToken));
     }
 
     private async Task PollLoopAsync(CancellationToken ct)
@@ -145,6 +152,30 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
             await Task.Delay(TimeSpan.FromSeconds(seconds), ct);
         }
     }
+
+    // RefreshAsync sees an address change only on its poll interval, and a quiet stream sits blocked in its
+    // read until then: this loop notices it itself, every second. The check is cheap - the config store re-reads
+    // the file only when its write time moved - so it costs a file-stat between polls.
+    private async Task AddressWatchAsync(CancellationToken ct)
+    {
+        var last = BaseOf(Url());
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            var cur = BaseOf(Url());
+            if (!Uri.Equals(cur, last))
+            {
+                last = cur;
+                ClearInflight();
+                EndStream();
+            }
+        }
+    }
+
+    /// <summary>The configured address as a base URI, or null when it is not one: the watcher and the refresh
+    /// must treat <c>http://h:1/</c> and <c>http://h:1</c> as the same router, so both compare Uris, not strings.</summary>
+    private static Uri? BaseOf(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps) ? u : null;
 
     // The router pushes its in-flight request list over the same event stream its own web UI subscribes to. The
     // stream is the only view of the requests while they run: the REST endpoints only know the finished ones.
@@ -173,22 +204,34 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
     /// list as a snapshot on every connection, so the state needs no handshake.</summary>
     internal async Task StreamOnceAsync(Uri baseUri, CancellationToken ct = default)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, "api/events"));
-        req.Headers.Accept.ParseAdd("text/event-stream");
-        using var res = await SseHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!res.IsSuccessStatusCode) throw new HttpRequestException($"llama-swap /api/events -> {(int)res.StatusCode}");
-        ClearInflight();
-        using var stream = await res.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-        try { await ReadLoopAsync(reader, baseUri, ct); }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        // The read's cancellation is registered before the request goes out: EndStream (a cleared or changed
+        // address) must reach the wait for the response headers, too, not only a read that is already running.
+        using var lifetime = new CancellationTokenSource(StreamLifetime);
+        var readCt = CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.Token);
+        _activeRead = readCt;
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, "api/events"));
+            req.Headers.Accept.ParseAdd("text/event-stream");
+            using var headerDeadline = new CancellationTokenSource(HeaderWait);
+            using var headerCt = CancellationTokenSource.CreateLinkedTokenSource(ct, readCt.Token, headerDeadline.Token);
+            using var res = await SseHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, headerCt.Token);
+            if (!res.IsSuccessStatusCode) throw new HttpRequestException($"llama-swap /api/events -> {(int)res.StatusCode}");
+            ClearInflight();
+            using var stream = await res.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+            try { await ReadLoopAsync(reader, baseUri, ct, readCt); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        }
+        finally
+        {
+            if (_activeRead == readCt) _activeRead = null;
+            readCt.Dispose();
+        }
     }
 
-    private async Task ReadLoopAsync(StreamReader reader, Uri baseUri, CancellationToken ct)
+    private async Task ReadLoopAsync(StreamReader reader, Uri baseUri, CancellationToken ct, CancellationTokenSource readCt)
     {
-        using var lifetime = new CancellationTokenSource(StreamLifetime);
-        using var readCt = CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.Token);
-        _activeRead = readCt;
         try
         {
             // The loop ends, not just the connection: a cleared or changed address stops the stream - the old
@@ -207,8 +250,8 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
                     if (doc.RootElement.ValueKind != JsonValueKind.Object) continue;
                     if (!doc.RootElement.TryGetProperty("type", out var type) || type.GetString() != "inflight") continue;
                     if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
-                    if (data.ValueKind == JsonValueKind.String) ApplyInflightEvent(data.GetString()!);
-                    else if (data.ValueKind == JsonValueKind.Object) ApplyInflightEvent(data.GetRawText());
+                    if (data.ValueKind == JsonValueKind.String) ApplyInflightEvent(data.GetString()!, baseUri);
+                    else if (data.ValueKind == JsonValueKind.Object) ApplyInflightEvent(data.GetRawText(), baseUri);
                 }
             }
         }
@@ -217,10 +260,6 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
         {
             // The lifetime, or a cleared or changed address, ended the read: a normal end, so the reconnect loop
             // counts it as one and opens the stream to the current address.
-        }
-        finally
-        {
-            if (_activeRead == readCt) _activeRead = null;
         }
     }
 
@@ -247,7 +286,10 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
     /// one request, "remove" drops it. Malformed events and entries are dropped, not fatal: a bad entry must
     /// not wipe the list it arrives in.
     /// </summary>
-    internal void ApplyInflightEvent(string payload)
+    /// <param name="from">The router the event came from, when it comes from the stream: a line already read can
+    /// land after the address changed and <see cref="RefreshAsync"/> cleared the list, so it is dropped, not
+    /// applied - the old router's request ids, models and elapsed times are not the new router's.</param>
+    internal void ApplyInflightEvent(string payload, Uri? from = null)
     {
         try
         {
@@ -255,6 +297,7 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
             var op = doc.RootElement.TryGetProperty("operation", out var o) && o.ValueKind == JsonValueKind.String ? o.GetString() : null;
             lock (_inflightLock)
             {
+                if (from is not null && !UrlMatches(from)) return;
                 var now = UtcNow();
                 void Add(LlamaSwapInflight r)
                 {

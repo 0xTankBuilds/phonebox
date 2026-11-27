@@ -71,7 +71,7 @@ Last updated: 2026-11-28 (PhoneBox 0.9.31).
   while **Show Antigravity chat titles on the phone** is also on; otherwise the widget shows the project name or
   `Antigravity`. Turning the setting off stops the scan.
 - **llama-swap stats** (off by default; **Settings › General › llama-swap stats**): while a server address is set, the
-  agent asks the [llama-swap](https://github.com/lewtun/llama-swap) router you point it at (its `/api/version`,
+  agent asks the [llama-swap](https://github.com/mostlygeek/llama-swap) router you point it at (its `/api/version`,
   `/v1/models`, `/api/metrics/stats` and `/api/metrics/activity` endpoints) on a configurable interval (default:
   every minute), and keeps its `/api/events`
   stream open to count the requests the router is serving right now. Only the counters it returns — requests and

@@ -265,6 +265,72 @@ public sealed class LlamaSwapMonitorTests : IDisposable
         await read.WaitAsync(TimeSpan.FromSeconds(10)); // the stream to the old address ends on the next line
     }
 
+    [Fact(DisplayName = "An event read before an address change is dropped, not applied to the new router")]
+    public async Task EventCrossingAnAddressChangeIsDropped()
+    {
+        await using var ls = new FakeLlamaSwap(keepEventsOpen: true, lateEventMs: 400);
+        var now = DateTime.Now; // frozen: the elapsed bookkeeping must not drift
+        var mon = new LlamaSwapMonitor(NullLogger<LlamaSwapMonitor>.Instance) { UrlOverride = ls.Url, Now = () => now, UtcNow = () => now };
+        var read = mon.StreamOnceAsync(new Uri(ls.Url));
+        await WaitUntil(() => mon.Inflight.Count > 0); // the snapshot has been applied
+        mon.UrlOverride = "http://127.0.0.1:1/elsewhere"; // the address changes while the late event is in flight
+        await read.WaitAsync(TimeSpan.FromSeconds(10)); // the loop ends on the stale check, not on the lifetime
+        Assert.DoesNotContain(mon.Inflight, r => r.Id == "late"); // the old router's event did not land in the new router's list
+        Assert.Contains(mon.Inflight, r => r.Id == "2"); // the list the stream built up to the change is what it left
+    }
+
+    [Fact(DisplayName = "The wait for the stream's response headers gives up on its deadline")]
+    public async Task HeaderWaitGivesUpOnItsDeadline()
+    {
+        var port = TestPorts.Listen(); // it listens but never answers: the client waits for headers that do not come
+        var url = port.Prefixes.Single().TrimEnd('/');
+        var mon = new LlamaSwapMonitor(NullLogger<LlamaSwapMonitor>.Instance) { UrlOverride = url, HeaderWait = TimeSpan.FromMilliseconds(300) };
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => mon.StreamOnceAsync(new Uri(url)));
+        port.Stop();
+        port.Close();
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), "the deadline is far sooner than the stream lifetime");
+    }
+
+    [Fact(DisplayName = "An address change reaches the stream's header wait, not only a read that is already running")]
+    public async Task AddressChangeCancelsTheHeaderWait()
+    {
+        var port = TestPorts.Listen(); // listens but never answers: the client sits in the header wait
+        var url = port.Prefixes.Single().TrimEnd('/');
+        var mon = new LlamaSwapMonitor(NullLogger<LlamaSwapMonitor>.Instance) { UrlOverride = url, HeaderWait = TimeSpan.FromMinutes(5) };
+        await mon.RefreshAsync(); // the address is on record, so the next refresh is the one that notices the change
+        var read = mon.StreamOnceAsync(new Uri(url));
+        await Task.Delay(200); // make sure it is in the wait
+        mon.UrlOverride = "http://127.0.0.1:1/elsewhere";
+        await mon.RefreshAsync(CancellationToken.None); // notices the change: the stream to the old address ends
+        var cancelled = false;
+        try { await read.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (OperationCanceledException) { cancelled = true; }
+        port.Stop();
+        port.Close();
+        Assert.True(cancelled, "the wait for the headers was not cancelled by the address change");
+    }
+
+    [Fact(DisplayName = "An address change stops a quiet stream within a second, without a poll in between")]
+    public async Task AddressChangeStopsTheStreamWithoutARefresh()
+    {
+        await using var ls = new FakeLlamaSwap(quietEvents: true);
+        var mon = new LlamaSwapMonitor(new ConfigStore(Path.Combine(_dir, "watch-config.json")), NullLogger<LlamaSwapMonitor>.Instance)
+        { UrlOverride = ls.Url, Now = () => DateTime.Now, UtcNow = () => DateTime.UtcNow };
+        await mon.StartAsync(CancellationToken.None); // the BackgroundService's own Start: PollLoop, StreamLoop and the watcher
+        try
+        {
+            await WaitUntil(() => mon.Inflight.Count > 0); // the stream is open and has fed the list
+            mon.UrlOverride = "http://127.0.0.1:1/elsewhere"; // no refresh runs in between: the watcher notices
+            await WaitUntil(() => mon.Inflight.Count == 0); // the quiet router's read could not end this by itself
+        }
+        finally
+        {
+            try { await mon.StopAsync(CancellationToken.None); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
     [Fact(DisplayName = "Changing the address clears the old list and ends the stream to a quiet old router")]
     public async Task ChangingTheAddressEndsTheStreamToAQuietRouter()
     {
@@ -388,12 +454,13 @@ internal sealed class FakeLlamaSwap : IAsyncDisposable
     private readonly bool _quietEvents; // /api/events stays open but sends nothing after the first events
     private readonly bool _versionFails; // /api/version then answers 500
     private readonly int _versionDelay; // /api/version waits this long before answering
+    private readonly int _lateEventMs; // one more in-flight event crosses the stream this long after the first ones
     private readonly string _base;
     private readonly Task _loop;
     public string Url => _server.Prefixes.Single().TrimEnd('/') + (_base.Length > 0 ? _base + "/" : "");
     public volatile string[] ActivityEntries = [];
 
-    public FakeLlamaSwap(bool activity = true, bool keepEventsOpen = false, bool objectData = false, string basePath = "", bool quietEvents = false, bool versionFails = false, int versionDelayMs = 0)
+    public FakeLlamaSwap(bool activity = true, bool keepEventsOpen = false, bool objectData = false, string basePath = "", bool quietEvents = false, bool versionFails = false, int versionDelayMs = 0, int lateEventMs = 0)
     {
         _activity = activity;
         _keepEventsOpen = keepEventsOpen;
@@ -401,6 +468,7 @@ internal sealed class FakeLlamaSwap : IAsyncDisposable
         _quietEvents = quietEvents;
         _versionFails = versionFails;
         _versionDelay = versionDelayMs;
+        _lateEventMs = lateEventMs;
         _base = basePath.Length > 0 ? (basePath.StartsWith('/') ? basePath : "/" + basePath).TrimEnd('/') : "";
         _loop = Task.Run(Serve);
     }
@@ -487,6 +555,14 @@ internal sealed class FakeLlamaSwap : IAsyncDisposable
             var sse = System.Text.Encoding.UTF8.GetBytes(EventsBody());
             await outStream.WriteAsync(sse, 0, sse.Length);
             await outStream.FlushAsync();
+            if (_lateEventMs > 0) // one more upsert, crossing whatever happens to the address in the meantime
+            {
+                await Task.Delay(_lateEventMs);
+                const string late = "data:{\"type\":\"inflight\",\"data\":\"{\\\"operation\\\":\\\"upsert\\\",\\\"request\\\":{\\\"id\\\":\\\"late\\\",\\\"model\\\":\\\"ModelLate\\\",\\\"req_path\\\":\\\"/v1/chat\\\",\\\"elapsed_ms\\\":11,\\\"resp_bytes\\\":1}}\"}\n\n";
+                var bytes = System.Text.Encoding.UTF8.GetBytes(late);
+                await outStream.WriteAsync(bytes, 0, bytes.Length);
+                await outStream.FlushAsync();
+            }
             if (_quietEvents)
             {
                 // a quiet router: the connection stays open and nothing else comes over it

@@ -481,7 +481,7 @@ Antigravity IDE and CLI chats with their model, tool and token metadata (prompts
 retained or sent). Chat titles reach the phone only when **Show Antigravity chat titles on the phone** is also on.
 
 The llama-swap stats widget (opt-in: **Settings › General › llama-swap stats**, off by default) shows the local
-[llama-swap](https://github.com/lewtun/llama-swap) router: which models are currently loaded, the requests in
+[llama-swap](https://github.com/mostlygeek/llama-swap) router: which models are currently loaded, the requests in
 flight (at most three as rows, more as `+N`, each with how long it has been running), requests and tokens today, the
 generation speed (p50 tok/s) and the time of the last request. Because the router only keeps its newest 999
 requests, when that whole log is still from today the requests and token counts show a `+`: they are a lower bound

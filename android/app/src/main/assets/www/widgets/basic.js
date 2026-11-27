@@ -841,6 +841,9 @@ W['llama-swap'] = {
     const flight = h('div', 'ls-reqs');
     // when each in-flight request first appeared, so the seconds grow between polls; seeded by the server's elapsed
     const seen = new Map();
+    // the server's elapsed for each id at the last poll: the same id reappearing with a lower value is a request
+    // that the router renumbered after a restart, not the one the local seed belongs to
+    const prevEl = new Map();
     let lastData = null; // last rendered data object: a tick with the same data only updates the seconds labels
     let flightRefs = []; // the seconds span of each request row, so a tick advances them without a re-render
     const row = (k, v) => h('div', 'ls-stat', h('span', 'ls-k', k), h('span', 'ls-v', v));
@@ -861,7 +864,7 @@ W['llama-swap'] = {
         const d = D.llamaswap;
         // A card that is not connected must not keep an in-flight display: a pulsing dot would keep the beat
         // timer drawing, and the version label would stay stale.
-        const reset = () => { seen.clear(); lastData = null; sum.replaceChildren(dot); dot.className = 'ls-dot'; flightRefs = []; flight.replaceChildren(); flight.style.display = 'none'; stats.style.display = 'none'; foot.style.display = 'none'; };
+        const reset = () => { seen.clear(); prevEl.clear(); lastData = null; sum.replaceChildren(dot); dot.className = 'ls-dot'; flightRefs = []; flight.replaceChildren(); flight.style.display = 'none'; stats.style.display = 'none'; foot.style.display = 'none'; };
         if (!d) { list.replaceChildren(h('div', 'empty', t('w.loading'))); reset(); return; }
         if (d.configured === false) { list.replaceChildren(h('div', 'empty', tp('Set the server address in Settings › General › llama-swap.'))); reset(); return; }
         if (!d.connected) { // error: the address is set but the server is down. No error: the first refresh has not finished yet.
@@ -885,13 +888,14 @@ W['llama-swap'] = {
         const now = Date.now();
         for (const r of reqs) {
           if (!r.id) continue;
-          const t0 = seen.get(r.id);
-          // the router renumbers its ids from 1 on a restart: a fresh server-side elapsed far below the local one
-          // means a new request that happens to carry an old id - re-seed it
-          if (t0 === undefined || (typeof r.elapsedMs === 'number' && r.elapsedMs < now - t0 - 15000))
-            seen.set(r.id, now - (r.elapsedMs || 0));
+          const el = typeof r.elapsedMs === 'number' ? r.elapsedMs : 0;
+          // the router renumbers its ids from 1 on a restart: for one request the server's elapsed only grows,
+          // so the same id with a lower value than the last poll is a renumbered id - re-seed it
+          const prev = prevEl.get(r.id);
+          if (prev === undefined || el < prev) seen.set(r.id, now - el);
+          prevEl.set(r.id, el);
         }
-        for (const id of [...seen.keys()]) if (!reqs.some(r => r.id === id)) seen.delete(id);
+        for (const id of [...seen.keys()]) if (!reqs.some(r => r.id === id)) { seen.delete(id); prevEl.delete(id); }
         let oldest = 0;
         for (const t0 of seen.values()) oldest = Math.max(oldest, now - t0);
         heroT.textContent = seen.size ? Math.floor(oldest / 1000) + 's' : '';

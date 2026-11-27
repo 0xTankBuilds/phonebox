@@ -8359,7 +8359,14 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "Year": "Ano",
       "{m}m": "{m} min",
       "{h}h {m}m": "{h} h {m} min",
-      "{d}d": "{d} d"
+      "{d}d": "{d} d",
+      "In flight": "Em andamento",
+      "Today": "Hoje",
+      "Speed": "Velocidade",
+      "Last request": "Último pedido",
+      "Set the server address in Settings › General › llama-swap.": "Defina o endereço do servidor em Configurações › Geral › llama-swap.",
+      "llama-swap is offline.": "llama-swap está offline.",
+      "{a} in / {b} out": "entrada {a} / saída {b}"
     }
   },
   "nl": {

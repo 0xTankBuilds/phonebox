@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- llama-swap: a widget for the local [llama-swap](https://github.com/lewtun/llama-swap) router — which models are
+- llama-swap: a widget for the local [llama-swap](https://github.com/mostlygeek/llama-swap) router — which models are
   currently loaded, the requests in flight (at most three rows, more as `+N`) with how long each has been running,
   requests and tokens today, the generation speed (p50 tok/s) and the time of the last request. Off by default; point
   **Settings › General › llama-swap stats** at the server (e.g. `http://127.0.0.1:8080`) to switch it on. Only the
