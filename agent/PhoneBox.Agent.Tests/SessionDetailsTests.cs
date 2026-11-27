@@ -1018,6 +1018,9 @@ public sealed class SessionDetailsTests : IDisposable
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         Assert.Equal(Path.Combine(home, ".pi-work"), SessionMonitor.PiAgentDir("~/.pi-work"));
+        Assert.Equal(Path.Combine(home, ".pi-work"), SessionMonitor.PiAgentDir("~\\.pi-work"));
+        Assert.Equal(home, SessionMonitor.PiAgentDir("~"));
+        Assert.Equal(home, SessionMonitor.PiAgentDir("~/"));
         Assert.Equal(Path.Combine(home, ".pi", "agent"), SessionMonitor.PiAgentDir(null));
         Assert.Equal(Path.Combine(home, ".pi", "agent"), SessionMonitor.PiAgentDir("  "));
         Assert.Equal("/opt/pi", SessionMonitor.PiAgentDir("/opt/pi"));

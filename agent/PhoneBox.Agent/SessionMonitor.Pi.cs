@@ -93,12 +93,16 @@ public sealed partial class SessionMonitor
 
     /// <summary>
     /// The agent folder: <c>PI_CODING_AGENT_DIR</c> with a leading <c>~</c> expanded the way Pi expands it
-    /// (<c>~/.pi-work</c>), or ~/.pi/agent when it is unset.
+    /// (<c>~/.pi-work</c> and a bare <c>~</c>), or ~/.pi/agent when it is unset. Combined rather than concatenated, so
+    /// the separator is the platform's own.
     /// </summary>
-    internal static string PiAgentDir(string? configured) =>
-        string.IsNullOrWhiteSpace(configured) ? Path.Combine(Home, ".pi", "agent")
-        : configured.StartsWith('~') ? Home + configured[1..]
-        : configured;
+    internal static string PiAgentDir(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured)) return Path.Combine(Home, ".pi", "agent");
+        if (!configured.StartsWith('~')) return configured;
+        var rest = configured[1..].TrimStart('/', '\\');
+        return rest.Length == 0 ? Home : Path.Combine(Home, rest);
+    }
 
     private static AgentSession? BuildPiSession(FileInfo f, PiDetails d, bool titles, string contextStore)
     {
