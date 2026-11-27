@@ -1913,6 +1913,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "Last activity": "마지막 활동",
       "Last exchange": "마지막 교환",
       "Last input / context window": "마지막 입력/ 컨텍스트 창",
+      "Context": "컨텍스트",
       "Last input {n} / {max} context window": "마지막 입력 {n} / {max} 컨텍스트 창",
       "Latest local session": "마지막 로컬 세션",
       "List": "목록",

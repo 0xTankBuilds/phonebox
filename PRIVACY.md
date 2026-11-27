@@ -71,11 +71,13 @@ Last updated: 2026-11-26 (PhoneBox 0.9.30).
   while **Show Antigravity chat titles on the phone** is also on; otherwise the widget shows the project name or
   `Antigravity`. Turning the setting off stops the scan.
 - **Pi sessions** (off by default; **Settings › General › Pi sessions**): while enabled, the agent scans recent
-  `*.jsonl` files under `~/.pi/agent/sessions` (about every 30 seconds for discovery) and follows appended records.
+  `*.jsonl` files under `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`; about every 30 seconds for
+  discovery) and follows appended records.
   Only the working directory, session id, model and provider names, thinking level, token counters, stop reasons,
   tool names and timestamps are kept for the panel; prompts, replies, thinking and tool arguments are never shown,
-  stored or sent. The model context window, when known, is read from Pi's own model store
-  (`~/.pi/agent/models-store.json`). Titles reach the phone only while **Show Pi session titles on the phone** is
+  stored or sent. The model context window, when Pi has cached that model in its own model store
+  (`~/.pi/agent/models-store.json`; built-in models may not be there), is read from that file. Titles reach the phone
+  only while **Show Pi session titles on the phone** is
   also on. Turning the setting off stops the scan.
 - **OpenCode sessions (off by default):** with Settings › General › "Show OpenCode sessions" on, the agent asks
   OpenCode's own background service — the native one, and the one inside each running WSL distro — for its recent

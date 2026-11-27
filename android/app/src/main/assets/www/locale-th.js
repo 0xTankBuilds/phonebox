@@ -1913,6 +1913,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "Last activity": "กิจกรรมล่าสุด",
       "Last exchange": "การแลกเปลี่ยนครั้งสุดท้าย",
       "Last input / context window": "หน้าต่างการเข้ารหัส/ บริบทสุดท้าย",
+      "Context": "บริบท",
       "Last input {n} / {max} context window": "หน้าต่างบริบท {n} / {max} ที่เข้ารหัสเมื่อสุดท้าย",
       "Latest local session": "วาระงานภายในระบบล่าสุด",
       "List": "รายการ",

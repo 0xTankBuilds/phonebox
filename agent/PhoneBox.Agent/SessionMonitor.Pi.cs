@@ -6,17 +6,24 @@ namespace PhoneBox.Agent;
 
 public sealed partial class SessionMonitor
 {
-    // Pi (pi-coding-agent) writes one JSONL file per session in ~/.pi/agent/sessions/<project slug>/<timestamp>_<id>.jsonl.
+    // Pi (pi-coding-agent) writes one JSONL file per session in <agent dir>/sessions/<project slug>/<timestamp>_<id>.jsonl,
+    // where the agent dir is ~/.pi/agent unless PI_CODING_AGENT_DIR says otherwise.
     // The monitor keeps only metadata: the "session" record's cwd and id, each "model_change"'s provider/modelId, each
     // "thinking_level_change"'s level, the title from "session_info" (while titles are shared), and, from assistant
     // "message" records, token usage, the stop reason, model, effort and tool names. Prompts, replies and tool
     // arguments are never kept or sent.
 
     private sealed record PiDetails(string? Id, string? Cwd, string? Provider, string? Model, string? Effort,
-        bool HasUsage, long Input, long Output, long CacheRead, long CacheWrite, long Reasoning,
+        bool HasUsage, bool TokensComplete, long Input, long Output, long CacheRead, long CacheWrite, long Reasoning,
         long LastInputTokens,
         bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt,
         string? LastTool, string? Title, long ReadOffset);
+
+    private const int PiMaxReadBytes = 2 * 1024 * 1024;
+    private const int PiHeaderBytes = 64 * 1024;
+    // Pi writes the failed assistant message before its auto-retry starts. A fresh error therefore stays "busy";
+    // once the file has been still for this long, the retries (including one slow provider attempt) have ended.
+    private static readonly TimeSpan PiErrorGrace = TimeSpan.FromMinutes(5);
 
     private string? _piDiscoveryRoot;
     private long _nextPiDiscovery;
@@ -27,12 +34,15 @@ public sealed partial class SessionMonitor
     private const int PiContextWindowRefreshMs = 60_000;
 
     /// <summary>
-    /// Recent Pi agent sessions, from ~/.pi/agent/sessions (or sessionsRoot for tests). The first complete record is
-    /// the "session" record with the working directory; until it has been read the session is not shown.
+    /// Recent Pi agent sessions, from <c>PI_CODING_AGENT_DIR</c>/sessions (or ~/.pi/agent/sessions), or sessionsRoot
+    /// for tests. The first complete record is the "session" record with the working directory; until it has been
+    /// read the session is not shown.
     /// </summary>
     internal IEnumerable<AgentSession> ReadPi(string? sessionsRoot = null, bool titles = false)
     {
-        var root = sessionsRoot ?? Path.Combine(Home, ".pi", "agent", "sessions");
+        var agentDir = Environment.GetEnvironmentVariable("PI_CODING_AGENT_DIR");
+        if (string.IsNullOrWhiteSpace(agentDir)) agentDir = Path.Combine(Home, ".pi", "agent");
+        var root = sessionsRoot ?? Path.Combine(agentDir, "sessions");
         if (!Directory.Exists(root)) yield break;
         var cutoff = DateTime.UtcNow.AddHours(-3);
         if (_piDiscoveryRoot != root || Environment.TickCount64 >= _nextPiDiscovery)
@@ -74,45 +84,49 @@ public sealed partial class SessionMonitor
     {
         if (d.Cwd is not { Length: > 0 } cwd) return null; // the "session" record has not flushed yet
         var project = Path.GetFileName(cwd.TrimEnd('\\', '/'));
+        project = SanitizeAntigravityLabel(project, AgyMaxProjectChars) ?? "pi";
         if (project.Length == 0) project = "pi";
         var id = d.Id ?? Path.GetFileNameWithoutExtension(f.Name);
+        // Pi ids are UUIDv7: the start is a timestamp shared by every session for weeks, so the end is what differs.
+        var shortId = id.Length <= 4 ? id : id[^4..];
         var age = DateTime.UtcNow - f.LastWriteTimeUtc;
-        // The turn is open while the last record is a user prompt, a tool result, or an assistant reply that carries
-        // a tool call; a final assistant reply (stopReason "stop", "length", "aborted" or "error") closes it.
-        var open = d.TurnOpen && age < TimeSpan.FromMinutes(3);
+        // A turn stays open while the last record is a user prompt, a tool result, or an assistant reply that carries
+        // a tool call, however long the model or a tool takes. A final assistant reply (stopReason "stop", "length",
+        // "aborted" or "error") closes it. An error closes it only after Pi's auto-retry grace.
+        var retrying = d.TurnClosed && d.Outcome == "failed" && age < PiErrorGrace;
+        var open = d.TurnOpen || retrying;
         var contextWindow = ContextWindows(contextStore).TryGetValue(d.Provider ?? "", out var models)
             && models.TryGetValue(d.Model ?? "", out var w) ? (long?)w : null;
-        var hasInput = d.HasUsage && (d.Input > 0 || d.CacheRead > 0 || d.CacheWrite > 0);
+        var hasUsage = d.HasUsage && d.TokensComplete;
+        var hasInput = hasUsage && (d.Input > 0 || d.CacheRead > 0 || d.CacheWrite > 0);
         return new AgentSession(
             Id: "pi:" + id,
             Tool: "pi",
-            Name: $"{project.ToLowerInvariant()}-{id[..Math.Min(4, id.Length)]}",
+            Name: $"{project.ToLowerInvariant()}-{shortId}",
             Project: project,
             Status: open ? "busy" : "idle",
             WaitingFor: null,
             Since: d.LastActivityAt ?? new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeMilliseconds(),
             StartedAt: new DateTimeOffset(f.CreationTimeUtc).ToUnixTimeMilliseconds(),
             Model: d.Model, Effort: d.Effort,
-            TotalTokens: d.HasUsage ? d.Input + d.CacheRead + d.CacheWrite + d.Output + d.Reasoning : null,
+            // Reasoning is part of Pi's output count, so it is not added again.
+            TotalTokens: hasUsage ? d.Input + d.CacheRead + d.CacheWrite + d.Output : null,
             InputTokens: hasInput ? d.Input + d.CacheWrite : null,
-            OutputTokens: d.HasUsage ? d.Output : null,
-            CachedInputTokens: d.HasUsage ? d.CacheRead : null,
-            ReasoningTokens: d.HasUsage && d.Reasoning > 0 ? d.Reasoning : null,
-            LastInputTokens: d.HasUsage ? d.LastInputTokens : null,
+            OutputTokens: hasUsage ? d.Output : null,
+            CachedInputTokens: hasUsage ? d.CacheRead : null,
+            ReasoningTokens: hasUsage && d.Reasoning > 0 ? d.Reasoning : null,
+            LastInputTokens: d.LastInputTokens > 0 ? d.LastInputTokens : null,
             ContextWindow: contextWindow,
             TurnStartedAt: open ? d.TurnStartedAt : null,
             Outcome: open ? null : d.TurnClosed ? d.Outcome : null,
             LastTool: d.LastTool,
-            Title: titles ? PiCleanTitle(d.Title) : null);
+            Title: titles ? CleanTitle(d.Title) : null);
     }
-
-    /// <summary>The session title Pi wrote for the chat, trimmed and capped like the others'.</summary>
-    internal static string? PiCleanTitle(string? title) =>
-        string.IsNullOrWhiteSpace(title) ? null : title.Trim() is { Length: > MaxTitleChars } t ? t[..MaxTitleChars] : title.Trim();
 
     /// <summary>
     /// provider → model → context window, from Pi's own model store (~/.pi/agent/models-store.json, one level up from
-    /// the sessions root); empty for a provider the store does not know. Re-read at most once a minute.
+    /// the sessions root). The store is keyed by provider and holds a <c>models</c> array; only the cached dynamic
+    /// catalogs are there, so a built-in model simply has no window. Re-read at most once a minute.
     /// </summary>
     internal static Dictionary<string, Dictionary<string, long>> ContextWindows(string storePath)
     {
@@ -131,17 +145,17 @@ public sealed partial class SessionMonitor
             }
             foreach (var provider in doc.RootElement.EnumerateObject())
             {
-                if (provider.Value.ValueKind != JsonValueKind.Object) continue;
+                if (provider.Value.ValueKind != JsonValueKind.Object
+                    || !provider.Value.TryGetProperty("models", out var list)
+                    || list.ValueKind != JsonValueKind.Array) continue;
                 var models = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-                foreach (var model in provider.Value.EnumerateObject())
+                foreach (var model in list.EnumerateArray())
                 {
-                    // TryGetInt64 throws on a non-number (null, string), so check the kind first:
-                    // one bad entry must not hide every Pi session.
-                    var w = model.Value.ValueKind == JsonValueKind.Object
-                        && model.Value.TryGetProperty("contextWindow", out var wEl)
-                        && wEl.ValueKind == JsonValueKind.Number
-                        && wEl.TryGetInt64(out var v) ? v : 0;
-                    if (w > 0) models[model.Name] = w;
+                    var id = Str(model, "id");
+                    // Long checks the value kind, so null, a string or a fraction is skipped instead of throwing
+                    // and hiding every session.
+                    var w = Long(model, "contextWindow");
+                    if (id is { Length: > 0 } && w is > 0) models[id] = w.Value;
                 }
                 if (models.Count > 0) map[provider.Name] = models;
             }
@@ -156,25 +170,41 @@ public sealed partial class SessionMonitor
         _piDetails.TryGetValue(path, out var cached) && cached.LastWrite == lastWriteUtc && cached.Length == length;
 
     /// <summary>
-    /// Scans metadata once, then follows appended lines. Null while the file has no complete record yet.
+    /// Scans metadata once, then follows appended lines. The first read is capped to a tail window; the session
+    /// header at the start is read separately so a large session still has its folder. Null while the file has no
+    /// complete record yet.
     /// </summary>
     private static PiDetails? ReadPiDetails(string path, PiDetails? previous = null, long previousLength = 0)
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var start = previous is null ? 0 : previousLength;
+        var len = fs.Length;
+        var start = previous is not null ? Math.Min(previousLength, len) : 0L;
+        var jumped = len - start > PiMaxReadBytes;
+        if (jumped) start = Math.Max(0, len - PiMaxReadBytes);
         fs.Seek(start, SeekOrigin.Begin);
         using var buffer = new MemoryStream();
         fs.CopyTo(buffer);
         var bytes = buffer.ToArray();
-        var complete = Array.LastIndexOf(bytes, (byte)'\n') + 1;
-        if (complete <= 0) return previous; // nothing new, or still no complete record
+        var lastNl = Array.LastIndexOf(bytes, (byte)'\n');
+        if (lastNl < 0) return previous; // nothing new, or still no complete record
+        var complete = lastNl + 1;
+        // A tail window can start in the middle of a record: drop that first partial line.
+        var parseFrom = 0;
+        if (jumped && start > 0)
+        {
+            var firstNl = Array.IndexOf(bytes, (byte)'\n', 0, complete);
+            if (firstNl < 0) return previous;
+            parseFrom = firstNl + 1;
+        }
 
-        var id = previous?.Id;
-        var cwd = previous?.Cwd;
+        var header = previous is null && start > 0 ? ReadPiHeader(path) : null;
+        var id = header?.Id ?? previous?.Id;
+        var cwd = header?.Cwd ?? previous?.Cwd;
         var provider = previous?.Provider;
         var model = previous?.Model;
         var effort = previous?.Effort;
         var hasUsage = previous?.HasUsage ?? false;
+        var tokensComplete = (previous?.TokensComplete ?? true) && !jumped;
         var input = previous?.Input ?? 0;
         var output = previous?.Output ?? 0;
         var cacheRead = previous?.CacheRead ?? 0;
@@ -189,10 +219,20 @@ public sealed partial class SessionMonitor
         var lastTool = previous?.LastTool;
         var title = previous?.Title;
 
-        foreach (var l in Encoding.UTF8.GetString(bytes, 0, complete).Split('\n'))
+        foreach (var l in Encoding.UTF8.GetString(bytes, parseFrom, complete - parseFrom).Split('\n'))
         {
             if (l.Length == 0) continue;
-            // Cheap skips before any JSON is parsed: most lines are tool results without metadata.
+            // Tool results and system records carry no metadata we keep, and can be huge (images, file contents).
+            // A tool result still means the turn is running; skip the JSON without parsing it.
+            if (l.Contains("\"role\":\"toolResult\"", StringComparison.Ordinal))
+            {
+                turnOpen = true;
+                turnClosed = false;
+                outcome = null;
+                continue;
+            }
+            if (l.Contains("\"role\":\"system\"", StringComparison.Ordinal)) continue;
+            // Cheap skips before any JSON is parsed: most other lines are tool results without metadata.
             if (!l.Contains("\"message\"", StringComparison.Ordinal)
                 && !l.Contains("\"session\"", StringComparison.Ordinal)
                 && !l.Contains("\"model_change\"", StringComparison.Ordinal)
@@ -210,11 +250,11 @@ public sealed partial class SessionMonitor
                         cwd = Str(root, "cwd") ?? cwd;
                         break;
                     case "model_change":
-                        provider = Str(root, "provider") ?? provider;
-                        model = Str(root, "modelId") ?? model;
+                        provider = SanitizeAntigravityLabel(Str(root, "provider"), AgyMaxMetaChars) ?? provider;
+                        model = SanitizeAntigravityLabel(Str(root, "modelId"), AgyMaxMetaChars) ?? model;
                         break;
                     case "thinking_level_change":
-                        effort = Str(root, "thinkingLevel") ?? effort;
+                        effort = SanitizeAntigravityLabel(Str(root, "thinkingLevel"), AgyMaxMetaChars) ?? effort;
                         break;
                     case "session_info":
                         title = Str(root, "name") ?? title;
@@ -225,9 +265,9 @@ public sealed partial class SessionMonitor
                         var ts = Ts(root) ?? Ts(m);
                         if (role == "assistant")
                         {
-                            model = Str(m, "model") ?? model;
-                            provider = Str(m, "provider") ?? provider;
-                            effort = Str(m, "thinkingLevel") ?? effort;
+                            model = SanitizeAntigravityLabel(Str(m, "model"), AgyMaxMetaChars) ?? model;
+                            provider = SanitizeAntigravityLabel(Str(m, "provider"), AgyMaxMetaChars) ?? provider;
+                            effort = SanitizeAntigravityLabel(Str(m, "thinkingLevel"), AgyMaxMetaChars) ?? effort;
                             if (m.TryGetProperty("usage", out var u) && u.ValueKind == JsonValueKind.Object)
                             {
                                 hasUsage = true;
@@ -238,14 +278,17 @@ public sealed partial class SessionMonitor
                                 reasoning += Num(u, "reasoning");
                                 // LastInputTokens is the latest request only, like Grok's and Codex's:
                                 // the cumulative counters above stay for InputTokens / TotalTokens.
-                                lastInputTokens = Num(u, "input") + Num(u, "cacheRead") + Num(u, "cacheWrite");
+                                // An error or abort carries Pi's EMPTY_USAGE; it must not wipe the context size.
+                                var requestInput = Num(u, "input") + Num(u, "cacheRead") + Num(u, "cacheWrite");
+                                if (requestInput > 0) lastInputTokens = requestInput;
                             }
                             var stop = Str(m, "stopReason");
                             if (stop is "stop" or "length" or "aborted" or "error")
                             {
                                 turnOpen = false;
                                 turnClosed = true;
-                                outcome = stop is "stop" or "length" ? "completed" : stop == "aborted" ? "aborted" : "failed";
+                                // A length stop is Pi's truncation-recovery path, so it can be retried like an error.
+                                outcome = stop == "stop" ? "completed" : stop == "aborted" ? "aborted" : "failed";
                             }
                             else
                             {
@@ -258,7 +301,7 @@ public sealed partial class SessionMonitor
                                 foreach (var block in c.EnumerateArray())
                                 {
                                     if (block.ValueKind == JsonValueKind.Object && Str(block, "type") == "toolCall")
-                                        lastTool = Str(block, "name") ?? lastTool;
+                                        lastTool = SanitizeAntigravityLabel(Str(block, "name"), AgyMaxMetaChars) ?? lastTool;
                                 }
                             }
                         }
@@ -276,13 +319,44 @@ public sealed partial class SessionMonitor
             catch (JsonException) { }
         }
 
-        return new PiDetails(id, cwd, provider, model, effort, hasUsage, input, output, cacheRead, cacheWrite, reasoning,
-            lastInputTokens,
+        return new PiDetails(id, cwd, provider, model, effort, hasUsage, tokensComplete, input, output, cacheRead,
+            cacheWrite, reasoning, lastInputTokens,
             turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, lastTool, title, start + complete);
     }
 
-    private static long Num(JsonElement e, string p)
-        => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(p, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+    /// <summary>The session header at the start of a ragged file: its id and working directory.</summary>
+    private static (string? Id, string? Cwd)? ReadPiHeader(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var buf = new byte[(int)Math.Min(fs.Length, PiHeaderBytes)];
+            var read = 0;
+            while (read < buf.Length)
+            {
+                var n = fs.Read(buf, read, buf.Length - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            if (read == 0) return null;
+            var end = Array.LastIndexOf(buf, (byte)'\n', read - 1);
+            if (end < 0) return null;
+            foreach (var line in Encoding.UTF8.GetString(buf, 0, end).Split('\n'))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    if (Str(root, "type") == "session") return (Str(root, "id"), Str(root, "cwd"));
+                }
+                catch (JsonException) { }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return null;
+    }
+
+    private static long Num(JsonElement e, string p) => Long(e, p) ?? 0;
 
     private static long? Ts(JsonElement e)
     {

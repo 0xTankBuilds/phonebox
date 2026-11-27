@@ -1283,6 +1283,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "Last activity": "Son faaliyet",
       "Last exchange": "Son değişim",
       "Last input / context window": "Son giriş / bağlam penceresi",
+      "Context": "Bağlam",
       "Last input {n} / {max} context window": "Son girdi {n} / {max} bağlam penceresi",
       "Latest local session": "Son yerel oturum",
       "List": "Liste",

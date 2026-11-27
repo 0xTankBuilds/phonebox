@@ -1949,6 +1949,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "Last activity": "آخر نشاط",
       "Last exchange": "آخر تبادل",
       "Last input / context window": "آخر مدخل/نافذة السياق",
+      "Context": "السياق",
       "Last input {n} / {max} context window": "نافذة سياق المدخل الأخير {n} / {max}",
       "Latest local session": "آخر دورة محلية",
       "List": "قائمة",

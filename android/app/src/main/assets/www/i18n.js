@@ -12974,6 +12974,7 @@
       'Cached input': 'Entrada em cache',
       'Reasoning output': 'Saída de raciocínio',
       'Last input / context window': 'Última entrada / janela de contexto',
+      "Context": "Contexto",
       'Recent tool': 'Ferramenta recente',
       'Ping {ms} · loss {loss}%': 'Ping {ms} · perda {loss}%',
       'Up ': 'Ligado há ',
