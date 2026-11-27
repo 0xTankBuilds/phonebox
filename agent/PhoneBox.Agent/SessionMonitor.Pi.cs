@@ -14,6 +14,7 @@ public sealed partial class SessionMonitor
 
     private sealed record PiDetails(string? Id, string? Cwd, string? Provider, string? Model, string? Effort,
         bool HasUsage, long Input, long Output, long CacheRead, long CacheWrite, long Reasoning,
+        long LastInputTokens,
         bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt,
         string? LastTool, string? Title, long ReadOffset);
 
@@ -97,7 +98,7 @@ public sealed partial class SessionMonitor
             OutputTokens: d.HasUsage ? d.Output : null,
             CachedInputTokens: d.HasUsage ? d.CacheRead : null,
             ReasoningTokens: d.HasUsage && d.Reasoning > 0 ? d.Reasoning : null,
-            LastInputTokens: d.HasUsage ? d.Input + d.CacheRead + d.CacheWrite : null,
+            LastInputTokens: d.HasUsage ? d.LastInputTokens : null,
             ContextWindow: contextWindow,
             TurnStartedAt: open ? d.TurnStartedAt : null,
             Outcome: open ? null : d.TurnClosed ? d.Outcome : null,
@@ -122,14 +123,23 @@ public sealed partial class SessionMonitor
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(storePath));
+            // A non-object store is empty, not an error: cache the empty map like any other.
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                _piContextWindows[storePath] = (Environment.TickCount64, map);
+                return map;
+            }
             foreach (var provider in doc.RootElement.EnumerateObject())
             {
                 if (provider.Value.ValueKind != JsonValueKind.Object) continue;
                 var models = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
                 foreach (var model in provider.Value.EnumerateObject())
                 {
+                    // TryGetInt64 throws on a non-number (null, string), so check the kind first:
+                    // one bad entry must not hide every Pi session.
                     var w = model.Value.ValueKind == JsonValueKind.Object
                         && model.Value.TryGetProperty("contextWindow", out var wEl)
+                        && wEl.ValueKind == JsonValueKind.Number
                         && wEl.TryGetInt64(out var v) ? v : 0;
                     if (w > 0) models[model.Name] = w;
                 }
@@ -170,6 +180,7 @@ public sealed partial class SessionMonitor
         var cacheRead = previous?.CacheRead ?? 0;
         var cacheWrite = previous?.CacheWrite ?? 0;
         var reasoning = previous?.Reasoning ?? 0;
+        var lastInputTokens = previous?.LastInputTokens ?? 0;
         var turnOpen = previous?.TurnOpen ?? false;
         var turnClosed = previous?.TurnClosed ?? false;
         var outcome = previous?.Outcome;
@@ -225,6 +236,9 @@ public sealed partial class SessionMonitor
                                 cacheRead += Num(u, "cacheRead");
                                 cacheWrite += Num(u, "cacheWrite");
                                 reasoning += Num(u, "reasoning");
+                                // LastInputTokens is the latest request only, like Grok's and Codex's:
+                                // the cumulative counters above stay for InputTokens / TotalTokens.
+                                lastInputTokens = Num(u, "input") + Num(u, "cacheRead") + Num(u, "cacheWrite");
                             }
                             var stop = Str(m, "stopReason");
                             if (stop is "stop" or "length" or "aborted" or "error")
@@ -263,6 +277,7 @@ public sealed partial class SessionMonitor
         }
 
         return new PiDetails(id, cwd, provider, model, effort, hasUsage, input, output, cacheRead, cacheWrite, reasoning,
+            lastInputTokens,
             turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, lastTool, title, start + complete);
     }
 

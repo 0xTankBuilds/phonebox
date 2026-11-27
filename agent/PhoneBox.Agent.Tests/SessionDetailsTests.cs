@@ -629,7 +629,7 @@ public sealed class SessionDetailsTests : IDisposable
         Assert.Equal("completed", s.Outcome);
         Assert.Equal("local-7b", s.Model);
         Assert.Equal("medium", s.Effort);
-        Assert.Equal(1272, s.LastInputTokens);     // input + cache reads + cache writes
+        Assert.Equal(662, s.LastInputTokens);      // latest request only: 2 input + 660 cache reads + 0 cache writes
         Assert.Equal(112, s.InputTokens);          // 100 + 2 + 10 cache writes
         Assert.Equal(70, s.OutputTokens);
         Assert.Equal(1160, s.CachedInputTokens);
@@ -745,6 +745,31 @@ public sealed class SessionDetailsTests : IDisposable
 
         // a provider the store does not know keeps the context size without a window
         Assert.True(SessionMonitor.ContextWindows(Path.Combine(_root, "no-such-store.json")).Count == 0);
+    }
+
+    [Fact]
+    public void Pi_InvalidContextWindow_IsSkippedAndValidModelsKept()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, ".pi", "agent"));
+        var store = Path.Combine(_root, ".pi", "agent", "models-store.json");
+        File.WriteAllText(store,
+            """{"llama-swap":{"bad-model":{"contextWindow":null},"string-model":{"contextWindow":"32768"},"local-7b":{"contextWindow":32768}},"other":{"other-model":{"contextWindow":65536}}}""");
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/g"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"local-7b","provider":"llama-swap","stopReason":"stop","content":[]}}""" + "\n");
+
+        // the null / string entries are skipped, the valid windows survive, and the session is still shown
+        var windows = SessionMonitor.ContextWindows(store);
+        Assert.Equal(32768, windows["llama-swap"]["local-7b"]);
+        Assert.Equal(65536, windows["other"]["other-model"]);
+        Assert.False(windows["llama-swap"].ContainsKey("bad-model"));
+        Assert.False(windows["llama-swap"].ContainsKey("string-model"));
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        Assert.Equal(32768, s.ContextWindow);
     }
 
     [Fact]
