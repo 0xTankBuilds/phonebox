@@ -917,7 +917,7 @@ W['llama-swap'] = {
         foot.style.display = '';
         stats.replaceChildren(
           row(tp('Today'), `${d.todayRequests == null ? '—' : d.todayRequests + (d.todayCapped ? '+' : '')} · ${tpv('{a} in / {b} out', { a: tv(d.todayInputTokens), b: tv(d.todayOutputTokens) })}`));
-        spd.textContent = d.genTps50 != null ? d.genTps50.toFixed(1) + ' tok/s (p50)' : '—';
+        spd.textContent = d.genTps != null ? d.genTps.toFixed(1) + ' tok/s' : '—';
         const at = d.lastRequestAt ? Date.parse(d.lastRequestAt) : NaN;
         last.textContent = !d.lastRequestAt || Number.isNaN(at) ? '—' : ago(at); // the shared helper: every language orders the duration and the word as it wants
       },

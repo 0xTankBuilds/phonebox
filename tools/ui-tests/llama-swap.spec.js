@@ -28,7 +28,7 @@ const connected = {
   connected: true, error: null, version: 'v275',
   loadedModels: ['Qwen3.8-27B-GGUF'],
   todayRequests: 3, todayInputTokens: 30, todayOutputTokens: 10,
-  genTps50: 38.5,
+  genTps: 38.5,
   lastRequestAt: new Date(Date.now() - 10_000).toISOString(),
   inflight: 1,
   inflightRequests: [{ id: '7', model: 'Qwen3.8-27B-GGUF', elapsedMs: 950 }],
@@ -90,7 +90,7 @@ test('llama-swap lists every loaded model and every in-flight request with its m
   await expect(page.locator('.ls-reqs .ls-rs')).toHaveText(['12s', '2s']);
   await expect(page.locator('.ls-reqs .ls-req').nth(1)).toContainText('Qwen3.8-27B-GGUF');
   // the speed is shown, the big one
-  await expect(page.locator('.ls-spd > span:last-child')).toHaveText('38.5 tok/s (p50)');
+  await expect(page.locator('.ls-spd > span:last-child')).toHaveText('38.5 tok/s');
   // and an offline card drops the request rows with the rest
   await llamaswap(page, { connected: false, error: 'offline' });
   await expect(page.locator('.ls-reqs .ls-req')).toHaveCount(0);

@@ -9,17 +9,18 @@ public sealed class LlamaSwapMonitorTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("llamaswap-test").FullName;
 
-    [Fact(DisplayName = "The refresh reads the version, the loaded models and the generation speed")]
+    [Fact(DisplayName = "The refresh reads the version, the loaded models and the newest request's speed")]
     public async Task RefreshReadsServer()
     {
         await using var ls = new FakeLlamaSwap();
+        ls.ActivityEntries = [Entry(DateTime.Now, 100, 10, tps: 58.42)];
         var mon = Monitor(ls.Url);
         await mon.RefreshAsync();
         var s = mon.Snapshot()!;
         Assert.True(s.Connected);
         Assert.Equal("v275", s.Version);
         Assert.Equal(["Qwen3.8-27B-GGUF"], s.LoadedModels); // the unloaded and the status-less model are out
-        Assert.Equal(38.53, s.GenTps50!.Value, 2);
+        Assert.Equal(58.42, s.GenTps!.Value, 2); // the newest finished request measured this speed itself
         Assert.False(s.TodayCapped); // an empty log window holds no 999 requests from today
     }
 
@@ -41,6 +42,20 @@ public sealed class LlamaSwapMonitorTests : IDisposable
         Assert.Equal(150, s.TodayInputTokens);
         Assert.Equal(15, s.TodayOutputTokens);
         Assert.Equal(now, s.LastRequestAt!.Value, TimeSpan.FromSeconds(2));
+    }
+
+    [Fact(DisplayName = "The speed is the newest finished request's tokens per second, not the older ones")]
+    public async Task SpeedIsTheNewestRequestTps()
+    {
+        await using var ls = new FakeLlamaSwap();
+        var now = DateTime.Now;
+        ls.ActivityEntries = [
+            Entry(now, 100, 10, tps: 58.42), // newest: the panel's speed
+            Entry(now.AddMinutes(-1), 50, 5, tps: 40.31),
+        ];
+        var mon = Monitor(ls.Url);
+        await mon.RefreshAsync();
+        Assert.Equal(58.42, mon.Snapshot()!.GenTps!.Value, 2);
     }
 
     [Fact(DisplayName = "A full log window of today marks the counts as a lower bound")]
@@ -336,7 +351,7 @@ public sealed class LlamaSwapMonitorTests : IDisposable
         }
     }
 
-    [Fact(DisplayName = "A missing activity log leaves today's counts empty but the speed intact")]
+    [Fact(DisplayName = "A missing activity log leaves today's counts and the speed empty")]
     public async Task MissingActivityDegraded()
     {
         await using var ls = new FakeLlamaSwap(activity: false);
@@ -345,7 +360,7 @@ public sealed class LlamaSwapMonitorTests : IDisposable
         var s = mon.Snapshot()!;
         Assert.True(s.Connected);
         Assert.Null(s.TodayRequests);
-        Assert.Equal(38.53, s.GenTps50!.Value, 2); // the speed comes from the stats endpoint, which still answers
+        Assert.Null(s.GenTps); // the speed is a finished request's measurement: no log, no measurement
     }
 
     public void Dispose()
@@ -356,11 +371,14 @@ public sealed class LlamaSwapMonitorTests : IDisposable
     private static LlamaSwapMonitor Monitor(string url)
         => new(NullLogger<LlamaSwapMonitor>.Instance) { UrlOverride = url };
 
-    private static string Entry(DateTime local, long input, long output)
-        => $"{{\"timestamp\":\"{local.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fffZ}\",\"tokens\":{{\"input_tokens\":{input},\"output_tokens\":{output}}}}}";
+    private static string Entry(DateTime local, long input, long output, double? tps = null)
+    {
+        var tpsJson = tps is null ? "" : $",\"tokens_per_second\":{tps.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        return $"{{\"timestamp\":\"{local.ToUniversalTime():yyyy-MM-ddTHH:mm:ss.fffZ}\",\"tokens\":{{\"input_tokens\":{input},\"output_tokens\":{output}{tpsJson}}}}}";
+    }
 }
 
-/// <summary>A llama-swap server: /api/version, /v1/models, /api/metrics/stats, /api/metrics/activity, /api/events.</summary>
+/// <summary>A llama-swap server: /api/version, /v1/models, /api/metrics/activity, /api/events.</summary>
 internal sealed class FakeLlamaSwap : IAsyncDisposable
 {
     private readonly HttpListener _server = TestPorts.Listen();
@@ -421,9 +439,6 @@ internal sealed class FakeLlamaSwap : IAsyncDisposable
                 break;
             case "/v1/models":
                 body = """{"data":[{"id":"Qwen3.8-27B-GGUF","status":{"value":"loaded"}},{"id":"Bonsai-27B-Q1_0","status":{"value":"unloaded"}},{"id":"NoStatus"}]}""";
-                break;
-            case "/api/metrics/stats":
-                body = """{"total_requests":199,"total_input_tokens":11723138,"total_output_tokens":98605,"total_cache_tokens":11397352,"gen_histogram":{"p50":38.53,"p95":50.1}}""";
                 break;
             case "/api/metrics/activity" when _activity:
                 body = """{"data":[""" + string.Join(",", ActivityEntries) + """]}""";

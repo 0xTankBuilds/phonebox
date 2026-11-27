@@ -12,7 +12,7 @@ public sealed record LlamaSwapInflight(string Id, string Model, string Path, int
 
 /// <summary>
 /// One refresh of the llama-swap server: what is connected, which models are loaded, today's counts from its
-/// request log, the requests it is serving right now, and the generation speed it measured itself.
+/// request log, the requests it is serving right now, and the generation speed of the newest finished request.
 /// Counts and model names only - nothing from the prompts or answers ever leaves the server.
 /// </summary>
 public sealed record LlamaSwapSnapshot(
@@ -20,7 +20,7 @@ public sealed record LlamaSwapSnapshot(
     string? Error,
     string? Version,
     IReadOnlyList<string> LoadedModels,
-    double? GenTps50,
+    double? GenTps,
     int? TodayRequests,
     long? TodayInputTokens,
     long? TodayOutputTokens,
@@ -33,8 +33,8 @@ public sealed record LlamaSwapSnapshot(
     IReadOnlyList<LlamaSwapInflight> InflightRequests);
 
 /// <summary>
-/// Polls the local llama-swap server (the OpenAI-compatible LLM router): /api/version, /v1/models,
-/// /api/metrics/stats and /api/metrics/activity. Runs only while Settings › General › llama-swap has an address;
+/// Polls the local llama-swap server (the OpenAI-compatible LLM router): /api/version, /v1/models
+/// and /api/metrics/activity, and reads the in-flight list over its /api/events stream. Runs only while Settings › General › llama-swap has an address;
 /// an empty address polls nothing and the snapshot stays null.
 /// </summary>
 public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonitor> log) : BackgroundService
@@ -317,7 +317,7 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
         lock (_inflightLock) { _inflight.Clear(); _firstSeen.Clear(); }
     }
 
-    /// <summary>Reads the four endpoints once. Concurrent refreshes are serialized, not duplicated.</summary>
+    /// <summary>Reads the three endpoints once. Concurrent refreshes are serialized, not duplicated.</summary>
     internal async Task RefreshAsync(CancellationToken ct = default)
     {
         var url = Url();
@@ -356,15 +356,13 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
                 return;
             }
             var models = await GetAsync(baseUri, "v1/models", ct);
-            var stats = await GetAsync(baseUri, "api/metrics/stats", ct);
             var activity = await GetAsync(baseUri, $"api/metrics/activity?limit={ActivityWindow}", ct);
 
-            var genTps50 = ParseGenTps50(stats);
             var today = ParseToday(activity);
             var inflight = Inflight; // one read: the count and the list it belongs to must agree
             _snapshot = new LlamaSwapSnapshot(
                 true, null, ParseVersion(version), ParseLoadedModels(models),
-                genTps50, today.requests, today.input, today.output, today.capped,
+                today.tps, today.requests, today.input, today.output, today.capped,
                 today.lastRequestAt, inflight.Count, inflight);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -421,26 +419,28 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
         return list;
     }
 
-    /// <summary>The generation speed the router measured itself (p50). The lifetime totals the stats endpoint
-    /// also keeps have no reader on the phone, so they stay on the server like the rest of it.</summary>
-    private static double? ParseGenTps50(JsonElement? el)
-        => el is { ValueKind: JsonValueKind.Object } o && o.TryGetProperty("gen_histogram", out var gh)
-            && gh.ValueKind == JsonValueKind.Object && gh.TryGetProperty("p50", out var p50)
-            && p50.ValueKind == JsonValueKind.Number ? p50.GetDouble() : null;
-
     private static long? Num(JsonElement o, string key)
         => o.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : null;
 
     /// <summary>
     /// Today's counts from the request log (newest first, the newest <see cref="ActivityWindow"/> entries):
-    /// the requests made since the local midnight, and their input/output tokens. Null when the log endpoint is
-    /// unavailable. When the window is full and its oldest entry is still from today, the true counts are at
-    /// least as high, so the panel shows the lower bound with a "+", not a total.
+    /// the requests made since the local midnight, and their input/output tokens, and the generation speed of
+    /// the newest finished request - the one the panel shows as "Speed", so it moves with each new request,
+    /// not with a lifetime histogram. Null when the log endpoint is unavailable. When the window is full and
+    /// its oldest entry is still from today, the true counts are at least as high, so the panel shows the
+    /// lower bound with a "+", not a total.
     /// </summary>
-    private (int? requests, long? input, long? output, DateTime? lastRequestAt, bool capped) ParseToday(JsonElement? el)
+    private (int? requests, long? input, long? output, DateTime? lastRequestAt, double? tps, bool capped) ParseToday(JsonElement? el)
     {
         if (el is not { ValueKind: JsonValueKind.Object } o || !o.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            return (null, null, null, null, false);
+            return (null, null, null, null, null, false);
+        // the newest entry (index 0: the array is newest-first) measured its own generation speed; a log
+        // without it, or with an entry that carries no speed, shows no speed - the next request's fills it in
+        double? tps = null;
+        if (data.GetArrayLength() > 0
+            && data[0].TryGetProperty("tokens", out var newest) && newest.ValueKind == JsonValueKind.Object
+            && newest.TryGetProperty("tokens_per_second", out var tpsEl) && tpsEl.ValueKind == JsonValueKind.Number)
+            tps = tpsEl.GetDouble();
         var day = Now().Date;
         var requests = 0L;
         var input = 0L;
@@ -463,6 +463,6 @@ public sealed class LlamaSwapMonitor(ConfigStore config, ILogger<LlamaSwapMonito
             input += entry.TryGetProperty("tokens", out var tk) && tk.ValueKind == JsonValueKind.Object ? Num(tk, "input_tokens") ?? 0 : 0;
             output += entry.TryGetProperty("tokens", out var tk2) && tk2.ValueKind == JsonValueKind.Object ? Num(tk2, "output_tokens") ?? 0 : 0;
         }
-        return (checked((int)requests), input, output, last, data.GetArrayLength() == ActivityWindow && oldest is { } oldestTs && oldestTs >= day);
+        return (checked((int)requests), input, output, last, tps, data.GetArrayLength() == ActivityWindow && oldest is { } oldestTs && oldestTs >= day);
     }
 }
