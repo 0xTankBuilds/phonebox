@@ -1590,7 +1590,7 @@ export function handleEvent(e) {
 export const WIDGET_ICONS = { camera: '📹', dictate: '🎙️', spectrum: '📶', 'app-console': '🎛️', discord: '💬', 'discord-bar': '🔊', steam: '👥', 'steam-activity': '🔔', rules: '⚡', chargecare: '🔋', nextup: '⏭️', moon: '🌙', wordclock: '🔤', clock: '🕒', weather: '⛅', forecast: '🌦️', media: '🎵', lyrics: '🎤', stat: '📈', gauge: '⏲️', chart: '📊', meters: '💾', gpu: '🎮', quotas: '✳️', sessions: '🤖',
   github: '🐙', processes: '⚙️', shortcuts: '🎛️', button: '🔘', worldclock: '🌍', calendar: '📅', pomodoro: '🍅', focushistory: '📈', countdown: '⏳', note: '📝', command: '💻',
   push: '📡', inbox: '📬', label: '🔤', analog: '🕰️', progress: '📆', stopwatch: '⏱️', timer: '⏲️', counter: '🔢', breathe: '🫁', quote: '💬',
-  checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', feeds: '🗞️', photos: '🖼️', exchange: '💱', crypto: '🪙', image: '🖼️', pcswitch: '🖥️', pagebuttons: '🧭', 'plex-queue': '🎛️', 'plex-playlists': '🎶' };
+  checklist: '✅', battery: '🔋', topprocs: '🔥', quotaring: '🎯', volume: '🔊', sun: '🌅', air: '🍃', hackernews: '📰', hadash: '🏡', feeds: '🗞️', photos: '🖼️', exchange: '💱', crypto: '🪙', image: '🖼️', pcswitch: '🖥️', pagebuttons: '🧭', 'plex-queue': '🎛️', 'plex-playlists': '🎶' };
 
 // ================================================================= pages
 export const pager = $('pager');
@@ -1628,8 +1628,9 @@ export function buildLayout() {
   document.documentElement.style.setProperty('--pb-cols', String(designed.cols));
   document.documentElement.style.setProperty('--pb-rows', String(designed.rows));
   const h12 = hour12();
-  // the active language belongs in the key: the widgets render their texts once, when they are created
-  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, viewport.cols, viewport.rows, designed.cols, designed.rows, portrait, I18n?.getLang()]);
+  // the active language belongs in the key: the widgets render their texts once, when they are created; so does the
+  // Home Assistant address, which the dashboard widget reads once
+  const key = JSON.stringify([next, cfg.shortcuts, cfg.homeAssistant, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, viewport.cols, viewport.rows, designed.cols, designed.rows, portrait, I18n?.getLang()]);
   if (key === layoutKey) return;
   layoutKey = key;
   lastHour12 = h12;
