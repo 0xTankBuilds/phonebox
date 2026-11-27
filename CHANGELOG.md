@@ -6,6 +6,32 @@
   size and the context window (when Pi's model store knows it), and whether a turn is running. Off by default
   (**Settings › General › Pi sessions**), and session titles reach the phone only with their own switch on. The agent
   reads the local session files for their metadata only; prompts, replies and tool arguments are never kept or sent.
+- **Romanian** (Română) joins the interface languages: the panel, the settings page, the widget and template catalog,
+  the Windows tray, the Android pairing and phone-bridge dialogs, and a Romanian README. Pick it in Settings › General ›
+  Language, or it follows a phone set to Romanian (#671, [GabrielUlici](https://github.com/GabrielUlici)).
+- Stocks: A-share names such as 上证指数 show in full instead of two characters and an ellipsis; the name column fits
+  the longest name in the list, and exchange and crypto rows keep their layout (#674,
+  [elong365](https://github.com/elong365)).
+- Stocks: US and Hong Kong stocks show their English names (`Amazon.Com, Inc.`, `TENCENT`) when the panel language
+  is not Chinese and the quote feed has one; a Chinese panel keeps the Chinese names (#678, #679,
+  [Seyamalam](https://github.com/Seyamalam)).
+- Steam library: a cover cache folder (`appcache/librarycache`) that is itself a symbolic link or junction is refused,
+  like the folders below it, so covers are never served from outside Steam's cache (#684,
+  [Seyamalam](https://github.com/Seyamalam)).
+- Custom HTML: **Web page address** shows a web page instead of your own HTML, such as a Home Assistant dashboard,
+  Grafana or a camera on the home network (Android 7 or later). Plain http addresses work too (the panel is now served
+  over http inside the app, so the page and its pictures are not blocked as mixed content). The page runs in its own
+  origin and keeps its sign-in, cannot reach the panel or navigate it away, and is not clipped to the card's rounded
+  corners, because Android WebView then drops the rounded corners the page draws itself. Inside the http panel an https
+  page is not a secure context, so the few pages that need `crypto.subtle` or a service worker do not work there (#619,
+  [dancho12](https://github.com/dancho12)).
+- Trackpad: a two-finger scroll no longer nudges the cursor when the fingers land or lift a moment apart, and a tap
+  no longer moves it by a few pixels. **Inertial scrolling** (on by default, in the widget's Scrolling settings) lets a
+  two-finger flick coast on and slow down (#676, [Prajjwal2404](https://github.com/Prajjwal2404)).
+- Night screen: touching or dragging keeps it from turning on under your finger. Every touch restarts the 30-second
+  dark-room countdown and wake hold, so a scheduled night, a dark room or a rule's night action waits until 30 seconds
+  after you let go; the Stay and Go now buttons of a page switch do not count (#670,
+  [Prajjwal2404](https://github.com/Prajjwal2404)).
 
 ## 0.9.31 — 2026-11-27
 

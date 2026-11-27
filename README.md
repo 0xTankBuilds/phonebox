@@ -11,6 +11,7 @@
   <a href="docs/README.it.md">Italiano</a> ·
   <a href="docs/README.pt.md">Português</a> ·
   <a href="docs/README.pt-BR.md">Português (Brasil)</a> ·
+  <a href="docs/README.ro.md">Română</a> ·
   <a href="docs/README.nl.md">Nederlands</a> ·
   <a href="docs/README.pl.md">Polski</a> ·
   <a href="docs/README.ru.md">Русский</a> ·

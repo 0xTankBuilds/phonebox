@@ -12,6 +12,7 @@
     { code: 'it', name: 'Italian', nativeName: 'Italiano', locale: 'it-IT' },
     { code: 'pt', name: 'Portuguese', nativeName: 'Português', locale: 'pt-PT' },
     { code: 'pt-BR', name: 'Portuguese (Brazil)', nativeName: 'Português (Brasil)', locale: 'pt-BR' },
+    { code: 'ro', name: 'Romanian', nativeName: 'Română', locale: 'ro-RO' },
     { code: 'nl', name: 'Dutch', nativeName: 'Nederlands', locale: 'nl-NL' },
     { code: 'pl', name: 'Polish', nativeName: 'Polski', locale: 'pl-PL' },
     { code: 'ru', name: 'Russian', nativeName: 'Русский', locale: 'ru-RU' },
@@ -10764,6 +10765,7 @@
       'Mics off, camera off': 'Κλειστά μικρόφωνα και κάμερα',
       'Mute every microphone and stop the OBS virtual camera with one tap; speakers stay as they are.': 'Σίγαση όλων των μικροφώνων και διακοπή της εικονικής κάμερας του OBS με ένα πάτημα· τα ηχεία μένουν όπως είναι.',
       'Natural scrolling': 'Φυσική κύλιση',
+      'Inertial scrolling': 'Κύλιση με αδράνεια',
       'Haptic feedback': 'Απτική ανάδραση',
       'Tick while scrolling': 'Τικ κατά την κύλιση',
       'No vibration': 'Χωρίς δόνηση',
@@ -10782,6 +10784,7 @@
       'Next up': 'Ακολουθεί',
       'Nightstand': 'Κομοδίνο',
       'No card background': 'Χωρίς φόντο κάρτας',
+      'Web page address (shown instead of the HTML)': 'Διεύθυνση ιστοσελίδας (εμφανίζεται αντί για το HTML)',
       'Note': 'Σημείωση',
       'Notifications': 'Ειδοποιήσεις',
       'Now playing': 'Παίζει τώρα',
@@ -11474,6 +11477,7 @@
       'Mics off, camera off': 'Tắt micrô, tắt camera',
       'Mute every microphone and stop the OBS virtual camera with one tap; speakers stay as they are.': 'Tắt tiếng mọi micrô và dừng camera ảo OBS chỉ với một chạm; loa vẫn giữ nguyên.',
       'Natural scrolling': 'Cuộn tự nhiên',
+      'Inertial scrolling': 'Cuộn theo quán tính',
       'Haptic feedback': 'Phản hồi xúc giác',
       'Tick while scrolling': 'Rung nhẹ khi cuộn',
       'No vibration': 'Không rung',
@@ -11492,6 +11496,7 @@
       'Next up': 'Tiếp theo',
       'Nightstand': 'Để đầu giường',
       'No card background': 'Không nền thẻ',
+      'Web page address (shown instead of the HTML)': 'Địa chỉ trang web (hiển thị thay cho HTML)',
       'Note': 'Ghi chú',
       'Notifications': 'Thông báo',
       'Now playing': 'Đang phát',
@@ -12180,6 +12185,7 @@
       'Mics off, camera off': 'Microfones e câmera desligados',
       'Mute every microphone and stop the OBS virtual camera with one tap; speakers stay as they are.': 'Silencia todos os microfones e para a câmera virtual do OBS com um toque; os alto-falantes ficam como estão.',
       'Natural scrolling': 'Rolagem natural',
+      'Inertial scrolling': 'Rolagem com inércia',
       'Network': 'Rede',
       'News feeds': 'Feeds de notícias',
       'Next 12 hours': 'Próximas 12 horas',
@@ -12189,6 +12195,7 @@
       'Next up': 'A seguir',
       'Nightstand': 'Criado-mudo',
       'No card background': 'Sem fundo do cartão',
+      'Web page address (shown instead of the HTML)': 'Endereço de uma página da web (exibida no lugar do HTML)',
       'Note': 'Nota',
       'Notifications': 'Notificações',
       'Now playing': 'Tocando agora',
@@ -12787,6 +12794,7 @@
       'Start': 'Iniciar',
       'Meeting timer': 'Timer de reunião',
       'No wireless devices report a battery level': 'Nenhum dispositivo sem fio informa o nível de bateria',
+      'A web page needs Android 7 or later': 'A página da web precisa do Android 7 ou mais recente',
       'OBS did not do it': 'O OBS não fez isso',
       'Turn on OBS in Settings › General': 'Ative o OBS em Configurações › Geral',
       'PAUSED': 'PAUSADO',
@@ -13399,6 +13407,17 @@
       "Log water": "Zaznamenat vodu",
       "Time to drink water": "Je čas napít se vody"
     },
+    "ro": {
+      "Water intake": "Consum de apă",
+      "Log daily water intake and get local reminders until you reach your goal.": "Notează câtă apă bei zilnic și primește mementouri până îți atingi obiectivul.",
+      "Daily goal (ml)": "Obiectiv zilnic (ml)",
+      "Reminder interval in minutes (0 = off)": "Intervalul mementourilor în minute (0 = oprit)",
+      "Play a reminder sound": "Redă un sunet de memento",
+      "{amount} remaining": "Mai rămân {amount}",
+      "Custom amount (ml)": "Cantitate personalizată (ml)",
+      "Log water": "Notează apa",
+      "Time to drink water": "E timpul să bei apă"
+    },
     "ar": {
       "Water intake": "شرب الماء",
       "Log daily water intake and get local reminders until you reach your goal.": "سجّل كمية الماء التي تشربها يوميًا وتلقّ تذكيرات حتى تصل إلى هدفك.",
@@ -13747,6 +13766,21 @@
       "Red on rise": "Červená při růstu",
       "Green on rise": "Zelená při růstu"
     },
+    "ro": {
+      "Some data may be stale": "Unele date pot fi învechite",
+      "Stocks": "Acțiuni",
+      "Quotes and intraday charts for your watchlist.": "Cotații și grafice intraday pentru lista ta de urmărire.",
+      "Display mode": "Mod de afișare",
+      "Price list": "Listă de cotații",
+      "Intraday charts": "Grafice intraday",
+      "Chart grid (rows × columns)": "Grilă de grafice (rânduri × coloane)",
+      "Stock watchlist": "Listă de urmărire a acțiunilor",
+      "Symbols (one per line, up to 20)": "Simboluri (unul pe rând, maximum 20)",
+      "Use sh, sz or bj for mainland China, hk for Hong Kong, and us for US stocks.": "Folosește sh, sz sau bj pentru China continentală, hk pentru Hong Kong și us pentru acțiunile din SUA.",
+      "Price colours": "Culorile cotațiilor",
+      "Red on rise": "Roșu la creștere",
+      "Green on rise": "Verde la creștere"
+    },
     "ar": {
       "Some data may be stale": "قد تكون بعض البيانات قديمة",
       "Stocks": "الأسهم",
@@ -13811,6 +13845,7 @@
     "uk": "Дозволити підтвердження WorkBuddy на телефоні",
     "hi": "फ़ोन पर WorkBuddy की मंज़ूरी देने दें",
     "cs": "Povolit schvalování WorkBuddy na telefonu",
+    "ro": "Permite aprobările WorkBuddy pe telefon",
     "ar": "السماح بموافقات WorkBuddy على الهاتف",
     "zh-Hant": "允許在手機上審批 WorkBuddy 請求"
   };
@@ -13985,6 +14020,14 @@
       "Posts to show": "Počet zobrazených příspěvků",
       "Reads": "Zobrazení",
       "Comments": "Komentáře"
+    },
+    "ro": {
+      "Stock forum": "Forum de acțiuni",
+      "Recent East Money forum posts for a stock.": "Postări recente despre o acțiune pe forumul East Money.",
+      "Six-digit stock code": "Codul acțiunii din șase cifre",
+      "Posts to show": "Postări afișate",
+      "Reads": "Citiri",
+      "Comments": "Comentarii"
     },
     "ar": {
       "Stock forum": "منتدى الأسهم",
