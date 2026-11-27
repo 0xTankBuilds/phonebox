@@ -195,9 +195,18 @@ public sealed partial class SessionMonitor
         var jumped = len - start > PiMaxReadBytes;
         if (jumped) start = Math.Max(0, len - PiMaxReadBytes);
         fs.Seek(start, SeekOrigin.Begin);
-        using var buffer = new MemoryStream();
-        fs.CopyTo(buffer);
-        var bytes = buffer.ToArray();
+        // Exactly the bytes the length snapshot covers: CopyTo would follow the file past it, and Pi can grow the
+        // file with a huge tool result while it is being read, so the read must stay inside its own budget.
+        var want = (int)Math.Max(0, len - start);
+        var bytes = new byte[want];
+        var read = 0;
+        while (read < want)
+        {
+            var n = fs.Read(bytes, read, want - read);
+            if (n <= 0) break;
+            read += n;
+        }
+        if (read < bytes.Length) Array.Resize(ref bytes, read);
         var lastNl = Array.LastIndexOf(bytes, (byte)'\n');
         if (lastNl < 0) return previous; // nothing new, or still no complete record
         var complete = lastNl + 1;
