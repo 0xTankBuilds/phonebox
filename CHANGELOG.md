@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Pi agent sessions in the AI sessions widget: model, thinking level, last tool, token counters, the current context
+  size and the context window (when Pi's model store knows it), and whether a turn is running. Off by default
+  (**Settings › General › Pi sessions**), and session titles reach the phone only with their own switch on. The agent
+  reads the local session files for their metadata only; prompts, replies and tool arguments are never kept or sent.
+
 ## 0.9.31 — 2026-11-27
 
 - Pages: a dimmed **photo background** per page, from the Photo frame's source (a folder or an Immich album). A new

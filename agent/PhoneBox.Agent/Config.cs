@@ -34,6 +34,8 @@ public sealed class AgentConfig
     public CursorConfig Cursor { get; set; } = new();
     /// <summary>Clipboard sharing with the paired phone (macOS only; off by default).</summary>
     public BridgeConfig Bridge { get; set; } = new();
+    /// <summary>Pi agent sessions on the AI sessions widget (off by default).</summary>
+    public PiConfig Pi { get; set; } = new();
     /// <summary>Antigravity chats on the AI sessions widget (off by default).</summary>
     public AntigravityConfig Antigravity { get; set; } = new();
     /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
@@ -403,6 +405,15 @@ public sealed class CursorConfig
     /// (needs the Cursor hook, see Settings › General). Cursor's hook runs before every command, also the ones it would
     /// run by itself, and waits for the phone while one is connected, so this stays off until you turn it on.</summary>
     public bool PhoneApprovals { get; set; }
+}
+
+public sealed class PiConfig
+{
+    /// <summary>Show recent Pi agent sessions on the AI sessions widget (off by default, like Cursor's).</summary>
+    public bool Sessions { get; set; }
+    /// <summary>Show each Pi session's title on the phone. The title is the name Pi wrote for the session, so it
+    /// stays off the phone until you turn it on, like Antigravity's.</summary>
+    public bool ShareSessionTitles { get; set; }
 }
 
 public sealed class AntigravityConfig
@@ -948,6 +959,7 @@ public sealed partial class ConfigStore(string path)
             .Where(x => x.key is not null && x.key != defaultClaude)
             .DistinctBy(x => x.key).Select(x => x.d).DistinctBy(d => d.Label, StringComparer.OrdinalIgnoreCase).Take(10).ToArray();
         c.Cursor ??= new();
+        c.Pi ??= new();
         c.Antigravity ??= new();
         c.OpenCode ??= new();
         c.Bridge ??= new(); // a hand-edited "bridge": null must not break /api/config or the clipboard poll

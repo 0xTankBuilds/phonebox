@@ -881,6 +881,13 @@ nav a.on::before { color: var(--accent); }
       </div>
 
       <div class="card">
+        <h3 data-i18n="s.pi.title">Pi sessions</h3>
+        <p class="hint" style="margin:0 0 12px" data-i18n="s.pi.hint">Show recent Pi agent sessions on the AI sessions widget (off by default). Only session metadata and token counters are kept; prompts, replies and tool arguments are never shown, stored or sent.</p>
+        <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="pi.sessions"><span></span></label> <span data-i18n="s.pi.sessions">Show Pi sessions</span></div>
+        <label class="check"><input type="checkbox" data-bind="pi.shareSessionTitles"> <span data-i18n="s.pi.shareSessionTitles">Show Pi session titles on the phone (Pi writes a title for each session)</span></label>
+      </div>
+
+      <div class="card">
         <h3 data-i18n="s.antigravity.title">Antigravity sessions</h3>
         <p class="hint" style="margin:0 0 12px" data-i18n="s.antigravity.hint">Show recent Antigravity chats on the AI sessions widget (off by default). Only step metadata and token counters are kept; prompts, replies and tool arguments are never shown, stored or sent.</p>
         <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="antigravity.sessions" aria-labelledby="antigravitySessionsLabel"><span></span></label> <span id="antigravitySessionsLabel" data-i18n="s.antigravity.sessions">Show Antigravity sessions</span></div>
