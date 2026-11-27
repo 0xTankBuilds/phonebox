@@ -160,6 +160,13 @@ provide defaults; a widget's own options override them, including an empty provi
 Install a compatible CLI from [CodexBar](https://github.com/steipete/CodexBar) if available for your system.
 PhoneBox uses native local sources when no compatible CLI is installed.
 
+**Which providers show** is set once in **Settings › General › AI quotas & CodexBar › Tracked AI services** (all on by
+default). A Clock status line, an AI quotas widget and a CodexBar widget follow it, including widgets added later and
+pages made from a template. To give one widget its own list, untick **Follow my AI providers** in its settings and pick
+the providers there.
+The Quota ring's provider picker offers only the providers in this list, plus Cursor. A ring keeps the provider it
+already shows, so a ring set to Grok still asks for Grok quotas after Grok is turned off here.
+
 **Claude quotas** need the sign-in of the Claude Code command-line tool (run `claude` and sign in). The Claude Desktop
 app keeps its own sign-in to itself, so with only the desktop app the widget shows the plan and says so; its sessions
 still show up in the Sessions widget.
