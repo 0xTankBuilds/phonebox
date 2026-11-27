@@ -124,6 +124,10 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
                 try { list.AddRange(ReadPi(titles: config!.Get().Pi.ShareSessionTitles)); }
                 catch (Exception ex) { log.LogDebug("pi sessions: {Msg}", ex.Message); }
             }
+            else
+            {
+                ClearPiCache();
+            }
             // Antigravity sessions are off until Settings › General › Antigravity sessions is enabled.
             if (config?.Get().Antigravity.Sessions == true)
             {

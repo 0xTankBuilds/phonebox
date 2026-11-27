@@ -480,15 +480,17 @@ Antigravity sessions (opt-in: **Settings › General › Antigravity sessions**,
 Antigravity IDE and CLI chats with their model, tool and token metadata (prompts, replies and tool arguments are never
 retained or sent). Chat titles reach the phone only when **Show Antigravity chat titles on the phone** is also on.
 
-Pi sessions (opt-in: **Settings › General › Pi sessions**, off by default) show recent local [Pi](https://github.com/earendil-works/pi) agent
-sessions from `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`), with the model, thinking level, token
-counters, the current context size and the
-last tool (prompts, replies and tool arguments are never retained or sent). A session reads as working while its last
-record is a prompt, a tool result, or an assistant reply that carries a tool call, and as finished when the turn ended
-with a stop, an abort, or an error — the usual buzz and "session finished" toast apply. An error waits briefly for Pi's
-automatic retry before it counts as finished. The context window comes from Pi's cached model store, so a built-in model
-that Pi has not cached shows the context size alone. Session titles reach the phone only when **Show Pi session titles
-on the phone** is also on.
+Pi sessions (opt-in: **Settings › General › Pi sessions**, off by default) show recent local [Pi](https://github.com/earendil-works/pi)
+agent sessions from `~/.pi/agent/sessions` (or `$PI_CODING_AGENT_DIR/sessions`; a leading `~` there is expanded the
+way Pi expands it), with the model, thinking level, token counters, the current context size and the last tool
+(prompts, replies and tool arguments are never retained or sent). A session reads as working while its last record is a
+prompt, a tool result, or an assistant reply that carries a tool call, and as finished when the turn ended with a stop,
+an abort, or an error — the usual buzz and "session finished" toast apply. A failure is reported at once; when Pi
+retries it, the recovery it writes to the same file puts the session back to working, and the retried reply ends it. A
+turn that writes nothing for half an hour settles as idle with no outcome, so a session Pi was killed in neither reads
+"working" for hours nor claims a finish. The context window comes from Pi's cached model store, the file next to the
+sessions folder, so a built-in model that Pi has not cached shows the context size alone. Session titles reach the
+phone only when **Show Pi session titles on the phone** is also on; with it off no title is read at all.
 
 OpenCode's agent questions work the same way: when the agent asks "route A, B or C, or type your own", the phone
 shows the choices as buttons (and a text field when a custom answer is allowed) and sends the pick back. Questions

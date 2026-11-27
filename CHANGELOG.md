@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Pi agent sessions in the AI sessions widget: model, thinking level, last tool, token counters, the current context
-  size and the context window (when Pi's cached model store knows it), and whether a turn is running. Off by default
+  size and the context window (when Pi's cached model store knows it), and whether a turn is running: a failed reply
+  finishes at once, its automatic retry puts the row back to working, and a turn that has written nothing for half an
+  hour settles as idle instead of hanging on. Off by default
   (**Settings › General › Pi sessions**), and session titles reach the phone only with their own switch on. The agent
   reads the local session files for their metadata only; prompts, replies and tool arguments are never kept or sent.
 - **Romanian** (Română) joins the interface languages: the panel, the settings page, the widget and template catalog,

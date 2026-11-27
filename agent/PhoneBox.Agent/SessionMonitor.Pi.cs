@@ -16,7 +16,7 @@ public sealed partial class SessionMonitor
     private sealed record PiDetails(string? Id, string? Cwd, string? Provider, string? Model, string? Effort,
         bool HasUsage, bool TokensComplete, long Input, long Output, long CacheRead, long CacheWrite, long Reasoning,
         long LastInputTokens,
-        bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt, long? ClosedAt,
+        bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt,
         string? LastTool, string? Title, long ReadOffset);
 
     /// <summary>The first fields of a record, enough to keep its lifecycle meaning without reading its payload.</summary>
@@ -30,14 +30,15 @@ public sealed partial class SessionMonitor
     private const int PiScanChunkBytes = 64 * 1024;
     // Where a message record's role can be: the first property of its message object, before any payload.
     private const int PiRoleScanBytes = 1024;
-    // Pi writes the failed assistant message before its auto-retry starts. A fresh error therefore stays "busy";
-    // once the failed reply is older than this, the retries (including one slow provider attempt) have ended.
-    private static readonly TimeSpan PiErrorGrace = TimeSpan.FromMinutes(5);
+    // Pi writes the file only when a message ends, so a long tool or a slow model leaves it untouched for minutes. A
+    // turn that has written nothing for this long has stopped being believable as "working": the process may have
+    // been killed mid-tool, and the row must settle instead of hanging until it leaves the 3-hour window.
+    private static readonly TimeSpan PiStaleAfter = TimeSpan.FromMinutes(30);
 
     private string? _piDiscoveryRoot;
     private long _nextPiDiscovery;
     private string[] _piCandidateFiles = [];
-    private readonly ConcurrentDictionary<string, (DateTime LastWrite, long Length, PiDetails Details)> _piDetails = new();
+    private readonly ConcurrentDictionary<string, (DateTime LastWrite, long Length, bool Titles, PiDetails Details)> _piDetails = new();
 
     private static readonly ConcurrentDictionary<string, (long LoadedTick, Dictionary<string, Dictionary<string, long>> Windows)> _piContextWindows = new();
     private const int PiContextWindowRefreshMs = 60_000;
@@ -49,8 +50,7 @@ public sealed partial class SessionMonitor
     /// </summary>
     internal IEnumerable<AgentSession> ReadPi(string? sessionsRoot = null, bool titles = false)
     {
-        var agentDir = Environment.GetEnvironmentVariable("PI_CODING_AGENT_DIR");
-        if (string.IsNullOrWhiteSpace(agentDir)) agentDir = Path.Combine(Home, ".pi", "agent");
+        var agentDir = PiAgentDir(Environment.GetEnvironmentVariable("PI_CODING_AGENT_DIR"));
         var root = sessionsRoot ?? Path.Combine(agentDir, "sessions");
         if (!Directory.Exists(root)) yield break;
         var cutoff = DateTime.UtcNow.AddHours(-3);
@@ -74,14 +74,16 @@ public sealed partial class SessionMonitor
                 var f = new FileInfo(path);
                 if (!f.Exists || f.LastWriteTimeUtc <= cutoff) continue;
                 var hasCached = _piDetails.TryGetValue(path, out var cached);
-                var unchanged = hasCached && cached.LastWrite == f.LastWriteTimeUtc && cached.Length == f.Length;
+                // Titles are re-read when the switch moves: the cache never holds a title while sharing is off.
+                var unchanged = hasCached && cached.LastWrite == f.LastWriteTimeUtc && cached.Length == f.Length
+                    && cached.Titles == titles;
                 var appended = hasCached && f.Length > cached.Length;
                 var details = unchanged
                     ? cached.Details
                     : ReadPiDetails(path, appended ? cached.Details : null,
-                        appended ? cached.Details.ReadOffset : 0);
+                        appended ? cached.Details.ReadOffset : 0, titles);
                 if (details is null) continue; // no complete record yet: the next pass reads it again
-                if (!unchanged) _piDetails[path] = (f.LastWriteTimeUtc, f.Length, details);
+                if (!unchanged) _piDetails[path] = (f.LastWriteTimeUtc, f.Length, titles, details);
                 s = BuildPiSession(f, details, titles, store);
             }
             catch { }
@@ -89,23 +91,34 @@ public sealed partial class SessionMonitor
         }
     }
 
+    /// <summary>
+    /// The agent folder: <c>PI_CODING_AGENT_DIR</c> with a leading <c>~</c> expanded the way Pi expands it
+    /// (<c>~/.pi-work</c>), or ~/.pi/agent when it is unset.
+    /// </summary>
+    internal static string PiAgentDir(string? configured) =>
+        string.IsNullOrWhiteSpace(configured) ? Path.Combine(Home, ".pi", "agent")
+        : configured.StartsWith('~') ? Home + configured[1..]
+        : configured;
+
     private static AgentSession? BuildPiSession(FileInfo f, PiDetails d, bool titles, string contextStore)
     {
         if (d.Cwd is not { Length: > 0 } cwd) return null; // the "session" record has not flushed yet
         var project = Path.GetFileName(cwd.TrimEnd('\\', '/'));
         project = SanitizeAntigravityLabel(project, AgyMaxProjectChars) ?? "pi";
         if (project.Length == 0) project = "pi";
-        var id = d.Id ?? Path.GetFileNameWithoutExtension(f.Name);
+        // The id comes from the file: clean and cap it like every other label, then fall back to the file's name.
+        var id = SanitizeAntigravityLabel(d.Id, AgyMaxMetaChars)
+            ?? SanitizeAntigravityLabel(Path.GetFileNameWithoutExtension(f.Name), AgyMaxMetaChars) ?? "pi";
         // Pi ids are UUIDv7: the start is a timestamp shared by every session for weeks, so the end is what differs.
         var shortId = id.Length <= 4 ? id : id[^4..];
-        // A turn stays open while the last record is a user prompt, a tool result, or an assistant reply that carries
+        // A turn stays open while the last record is a prompt, a tool result, or an assistant reply that carries
         // a tool call, however long the model or a tool takes. A final assistant reply (stopReason "stop", "length",
-        // "aborted" or "error") closes it. An error closes it only after Pi's auto-retry grace, measured from the
-        // reply that failed: a later title rename rewrites the file without retrying and must not restart it.
-        var failedAt = d.ClosedAt ?? new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeMilliseconds();
-        var retrying = d.TurnClosed && d.Outcome == "failed"
-            && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - failedAt < PiErrorGrace.TotalMilliseconds;
-        var open = d.TurnOpen || retrying;
+        // "aborted" or "error") closes it at once; Pi's retry path reopens it by appending a context_edit. A turn
+        // that has written nothing for PiStaleAfter settles idle with no outcome, so a killed session cannot read
+        // "working" until it disappears.
+        var lastWrite = d.LastActivityAt ?? new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+        var fresh = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - lastWrite <= PiStaleAfter.TotalMilliseconds;
+        var open = d.TurnOpen && fresh;
         var contextWindow = ContextWindows(contextStore).TryGetValue(d.Provider ?? "", out var models)
             && models.TryGetValue(d.Model ?? "", out var w) ? (long?)w : null;
         var hasUsage = d.HasUsage && d.TokensComplete;
@@ -180,12 +193,16 @@ public sealed partial class SessionMonitor
     internal bool HasCachedPiDetails(string path, DateTime lastWriteUtc, long length) =>
         _piDetails.TryGetValue(path, out var cached) && cached.LastWrite == lastWriteUtc && cached.Length == length;
 
+    /// <summary>Forget every session that was read, as Antigravity does when its switch is turned off.</summary>
+    internal void ClearPiCache() => _piDetails.Clear();
+
     /// <summary>
     /// Scans metadata once, then follows appended lines. The first read is capped to a tail window; the session
     /// header at the start is read separately so a large session still has its folder. Null while the file has no
     /// complete record yet.
     /// </summary>
-    private static PiDetails? ReadPiDetails(string path, PiDetails? previous = null, long previousLength = 0)
+    private static PiDetails? ReadPiDetails(string path, PiDetails? previous = null, long previousLength = 0,
+        bool titles = false)
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var len = fs.Length;
@@ -214,11 +231,17 @@ public sealed partial class SessionMonitor
         PiRecordHead? skipped = null;
         if (jumped && start > 0)
         {
-            // The window starts inside a record that is not parsed. Its head is still read, so a record too large to
-            // hold whole (a tool result with a screenshot in it) keeps its meaning: the turn is running.
-            skipped = ReadPiRecordHead(fs, start, resume);
-            // A tail window can also start in the middle of a record: drop that first partial line.
-            parseFrom = Array.IndexOf(bytes, (byte)'\n', 0, complete) + 1;
+            // A window that begins right after a line break already starts at a record boundary: its first line is a
+            // whole record, not a tail, so nothing is dropped and nothing has to be looked up.
+            fs.Seek(start - 1, SeekOrigin.Begin);
+            if (fs.ReadByte() != '\n')
+            {
+                // The window starts inside a record that is not parsed. Its head is still read, so a record too large
+                // to hold whole (a tool result with a screenshot in it) keeps its meaning: the turn is running.
+                skipped = ReadPiRecordHead(fs, start, resume);
+                // A tail window can also start in the middle of a record: drop that first partial line.
+                parseFrom = Array.IndexOf(bytes, (byte)'\n', 0, complete) + 1;
+            }
         }
 
         var header = previous is null && start > 0 ? ReadPiHeader(path) : null;
@@ -240,9 +263,9 @@ public sealed partial class SessionMonitor
         var outcome = previous?.Outcome;
         var turnStartedAt = previous?.TurnStartedAt;
         var lastActivityAt = previous?.LastActivityAt;
-        var closedAt = previous?.ClosedAt;
         var lastTool = previous?.LastTool;
-        var title = previous?.Title;
+        // With title sharing off no title is ever read, so a cached one is dropped rather than kept in memory.
+        var title = titles ? previous?.Title : null;
 
         // The skipped record still counts for the turn, but its payload and the records before it stay unread, so
         // only the lifecycle is taken from it: a prompt or a tool result keeps the turn open, a reply can close it.
@@ -265,7 +288,6 @@ public sealed partial class SessionMonitor
                     turnOpen = false;
                     turnClosed = true;
                     outcome = PiStopOutcome(skippedStop!);
-                    closedAt = skipped.Timestamp ?? closedAt;
                 }
                 else
                 {
@@ -291,6 +313,15 @@ public sealed partial class SessionMonitor
                 continue;
             }
             if (lineRole == "system") continue;
+            // Pi's retry path appends a context_edit (and a compaction on an overflow) after a failed attempt, then
+            // writes nothing until the retried reply ends: that entry is the retry, so the turn is running again.
+            if (turnClosed && outcome == "failed" && PiLineType(l) is "context_edit" or "compaction")
+            {
+                turnOpen = true;
+                turnClosed = false;
+                outcome = null;
+                continue;
+            }
             // Cheap skips before any JSON is parsed: most other lines are tool results without metadata.
             if (!l.Contains("\"message\"", StringComparison.Ordinal)
                 && !l.Contains("\"session\"", StringComparison.Ordinal)
@@ -316,7 +347,8 @@ public sealed partial class SessionMonitor
                         effort = SanitizeAntigravityLabel(Str(root, "thinkingLevel"), AgyMaxMetaChars) ?? effort;
                         break;
                     case "session_info":
-                        title = Str(root, "name") ?? title;
+                        // A title is read only while titles are shared: with sharing off none is held in memory.
+                        if (titles) title = Str(root, "name") ?? title;
                         break;
                     case "message":
                         var m = root.TryGetProperty("message", out var mm) && mm.ValueKind == JsonValueKind.Object ? mm : default;
@@ -348,7 +380,6 @@ public sealed partial class SessionMonitor
                                 turnClosed = true;
                                 // A length stop is Pi's truncation-recovery path, so it can be retried like an error.
                                 outcome = PiStopOutcome(stop!);
-                                closedAt = ts ?? closedAt;
                             }
                             else
                             {
@@ -381,7 +412,7 @@ public sealed partial class SessionMonitor
 
         return new PiDetails(id, cwd, provider, model, effort, hasUsage, tokensComplete, input, output, cacheRead,
             cacheWrite, reasoning, lastInputTokens,
-            turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, closedAt, lastTool, title,
+            turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, lastTool, title,
             start + complete);
     }
 
@@ -403,6 +434,16 @@ public sealed partial class SessionMonitor
         if (role < 0) return null;
         var head = line[..role].TrimEnd(' ', '\t');
         return head.EndsWith("\"message\":{", StringComparison.Ordinal) ? PiJsonString(line, role + 7) : null;
+    }
+
+    /// <summary>
+    /// The record's own <c>type</c>, read only when it is the record's first field, so a tool argument or file
+    /// contents that mention a type cannot be mistaken for one. Null when the type is elsewhere.
+    /// </summary>
+    private static string? PiLineType(string line)
+    {
+        const string key = "{\"type\":\"";
+        return line.StartsWith(key, StringComparison.Ordinal) ? PiJsonString(line, key.Length - 1) : null;
     }
 
     /// <summary>
