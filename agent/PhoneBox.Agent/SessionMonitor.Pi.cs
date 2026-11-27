@@ -16,13 +16,22 @@ public sealed partial class SessionMonitor
     private sealed record PiDetails(string? Id, string? Cwd, string? Provider, string? Model, string? Effort,
         bool HasUsage, bool TokensComplete, long Input, long Output, long CacheRead, long CacheWrite, long Reasoning,
         long LastInputTokens,
-        bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt,
+        bool TurnOpen, bool TurnClosed, string? Outcome, long? TurnStartedAt, long? LastActivityAt, long? ClosedAt,
         string? LastTool, string? Title, long ReadOffset);
+
+    /// <summary>The first fields of a record, enough to keep its lifecycle meaning without reading its payload.</summary>
+    private sealed record PiRecordHead(string? Type, string? Role, long? Timestamp);
 
     private const int PiMaxReadBytes = 2 * 1024 * 1024;
     private const int PiHeaderBytes = 64 * 1024;
+    // A record too long to parse without holding its payload whole: only its own first and last bytes are read.
+    private const int PiRecordHeadBytes = 4 * 1024;
+    private const int PiRecordTailBytes = 4 * 1024;
+    private const int PiScanChunkBytes = 64 * 1024;
+    // Where a message record's role can be: the first property of its message object, before any payload.
+    private const int PiRoleScanBytes = 1024;
     // Pi writes the failed assistant message before its auto-retry starts. A fresh error therefore stays "busy";
-    // once the file has been still for this long, the retries (including one slow provider attempt) have ended.
+    // once the failed reply is older than this, the retries (including one slow provider attempt) have ended.
     private static readonly TimeSpan PiErrorGrace = TimeSpan.FromMinutes(5);
 
     private string? _piDiscoveryRoot;
@@ -89,11 +98,13 @@ public sealed partial class SessionMonitor
         var id = d.Id ?? Path.GetFileNameWithoutExtension(f.Name);
         // Pi ids are UUIDv7: the start is a timestamp shared by every session for weeks, so the end is what differs.
         var shortId = id.Length <= 4 ? id : id[^4..];
-        var age = DateTime.UtcNow - f.LastWriteTimeUtc;
         // A turn stays open while the last record is a user prompt, a tool result, or an assistant reply that carries
         // a tool call, however long the model or a tool takes. A final assistant reply (stopReason "stop", "length",
-        // "aborted" or "error") closes it. An error closes it only after Pi's auto-retry grace.
-        var retrying = d.TurnClosed && d.Outcome == "failed" && age < PiErrorGrace;
+        // "aborted" or "error") closes it. An error closes it only after Pi's auto-retry grace, measured from the
+        // reply that failed: a later title rename rewrites the file without retrying and must not restart it.
+        var failedAt = d.ClosedAt ?? new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+        var retrying = d.TurnClosed && d.Outcome == "failed"
+            && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - failedAt < PiErrorGrace.TotalMilliseconds;
         var open = d.TurnOpen || retrying;
         var contextWindow = ContextWindows(contextStore).TryGetValue(d.Provider ?? "", out var models)
             && models.TryGetValue(d.Model ?? "", out var w) ? (long?)w : null;
@@ -178,7 +189,9 @@ public sealed partial class SessionMonitor
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var len = fs.Length;
-        var start = previous is not null ? Math.Min(previousLength, len) : 0L;
+        // Where the previous read stopped: a record boundary, or the start of the file on the first read.
+        var resume = previous is not null ? Math.Min(previousLength, len) : 0L;
+        var start = resume;
         var jumped = len - start > PiMaxReadBytes;
         if (jumped) start = Math.Max(0, len - PiMaxReadBytes);
         fs.Seek(start, SeekOrigin.Begin);
@@ -188,13 +201,15 @@ public sealed partial class SessionMonitor
         var lastNl = Array.LastIndexOf(bytes, (byte)'\n');
         if (lastNl < 0) return previous; // nothing new, or still no complete record
         var complete = lastNl + 1;
-        // A tail window can start in the middle of a record: drop that first partial line.
         var parseFrom = 0;
+        PiRecordHead? skipped = null;
         if (jumped && start > 0)
         {
-            var firstNl = Array.IndexOf(bytes, (byte)'\n', 0, complete);
-            if (firstNl < 0) return previous;
-            parseFrom = firstNl + 1;
+            // The window starts inside a record that is not parsed. Its head is still read, so a record too large to
+            // hold whole (a tool result with a screenshot in it) keeps its meaning: the turn is running.
+            skipped = ReadPiRecordHead(fs, start, resume);
+            // A tail window can also start in the middle of a record: drop that first partial line.
+            parseFrom = Array.IndexOf(bytes, (byte)'\n', 0, complete) + 1;
         }
 
         var header = previous is null && start > 0 ? ReadPiHeader(path) : null;
@@ -216,22 +231,57 @@ public sealed partial class SessionMonitor
         var outcome = previous?.Outcome;
         var turnStartedAt = previous?.TurnStartedAt;
         var lastActivityAt = previous?.LastActivityAt;
+        var closedAt = previous?.ClosedAt;
         var lastTool = previous?.LastTool;
         var title = previous?.Title;
+
+        // The skipped record still counts for the turn, but its payload and the records before it stay unread, so
+        // only the lifecycle is taken from it: a prompt or a tool result keeps the turn open, a reply can close it.
+        if (skipped is { Type: "message", Role: { } skippedRole })
+        {
+            lastActivityAt = skipped.Timestamp ?? lastActivityAt;
+            if (skippedRole is "user" or "toolResult")
+            {
+                turnOpen = true;
+                turnClosed = false;
+                outcome = null;
+                if (skippedRole == "user") turnStartedAt = skipped.Timestamp ?? turnStartedAt;
+            }
+            else if (skippedRole == "assistant")
+            {
+                // The stop reason sits after the payload, so it is the record's own last bytes: the dropped line.
+                var skippedStop = PiTailStopReason(bytes, parseFrom - 1);
+                if (PiClosedStop(skippedStop))
+                {
+                    turnOpen = false;
+                    turnClosed = true;
+                    outcome = PiStopOutcome(skippedStop!);
+                    closedAt = skipped.Timestamp ?? closedAt;
+                }
+                else
+                {
+                    turnOpen = true;
+                    outcome = null;
+                }
+            }
+        }
 
         foreach (var l in Encoding.UTF8.GetString(bytes, parseFrom, complete - parseFrom).Split('\n'))
         {
             if (l.Length == 0) continue;
             // Tool results and system records carry no metadata we keep, and can be huge (images, file contents).
-            // A tool result still means the turn is running; skip the JSON without parsing it.
-            if (l.Contains("\"role\":\"toolResult\"", StringComparison.Ordinal))
+            // The role comes from the record's own message object, never from the rest of the line, so a tool
+            // argument or a file that mentions another role cannot pick the branch or skip an assistant record.
+            var lineRole = PiLineRole(l);
+            if (lineRole == "toolResult")
             {
+                // A tool result still means the turn is running; skip the JSON without parsing it.
                 turnOpen = true;
                 turnClosed = false;
                 outcome = null;
                 continue;
             }
-            if (l.Contains("\"role\":\"system\"", StringComparison.Ordinal)) continue;
+            if (lineRole == "system") continue;
             // Cheap skips before any JSON is parsed: most other lines are tool results without metadata.
             if (!l.Contains("\"message\"", StringComparison.Ordinal)
                 && !l.Contains("\"session\"", StringComparison.Ordinal)
@@ -283,12 +333,13 @@ public sealed partial class SessionMonitor
                                 if (requestInput > 0) lastInputTokens = requestInput;
                             }
                             var stop = Str(m, "stopReason");
-                            if (stop is "stop" or "length" or "aborted" or "error")
+                            if (PiClosedStop(stop))
                             {
                                 turnOpen = false;
                                 turnClosed = true;
                                 // A length stop is Pi's truncation-recovery path, so it can be retried like an error.
-                                outcome = stop == "stop" ? "completed" : stop == "aborted" ? "aborted" : "failed";
+                                outcome = PiStopOutcome(stop!);
+                                closedAt = ts ?? closedAt;
                             }
                             else
                             {
@@ -321,7 +372,121 @@ public sealed partial class SessionMonitor
 
         return new PiDetails(id, cwd, provider, model, effort, hasUsage, tokensComplete, input, output, cacheRead,
             cacheWrite, reasoning, lastInputTokens,
-            turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, lastTool, title, start + complete);
+            turnOpen, turnClosed, outcome, turnStartedAt, lastActivityAt, closedAt, lastTool, title,
+            start + complete);
+    }
+
+    private static bool PiClosedStop(string? stop) => stop is "stop" or "length" or "aborted" or "error";
+
+    private static string PiStopOutcome(string stop) =>
+        stop == "stop" ? "completed" : stop == "aborted" ? "aborted" : "failed";
+
+    /// <summary>
+    /// The role a message record carries in its own <c>message</c> object, read from the record's first bytes so a
+    /// huge tool result is skipped without parsing it. Only the property right after <c>"message":{</c> counts: a
+    /// role-like value in a tool argument or in file contents comes later and cannot be mistaken for it. Null when
+    /// the line is not a message record or the role is past the quick-scan window; the caller then parses the line.
+    /// </summary>
+    private static string? PiLineRole(string line)
+    {
+        var limit = Math.Min(line.Length, PiRoleScanBytes);
+        var role = line.IndexOf("\"role\":\"", 0, limit, StringComparison.Ordinal);
+        if (role < 0) return null;
+        var head = line[..role].TrimEnd(' ', '\t');
+        return head.EndsWith("\"message\":{", StringComparison.Ordinal) ? PiJsonString(line, role + 7) : null;
+    }
+
+    /// <summary>
+    /// The record that a read window starts inside, identified from its first bytes: enough to keep its lifecycle
+    /// meaning (a prompt or a tool result keeps the turn open, a finished reply closes it) without parsing or
+    /// holding its payload. <paramref name="floor"/> is the last record boundary before the window, so the record
+    /// starts at the last line break before the window (or at the floor when there is none).
+    /// </summary>
+    private static PiRecordHead? ReadPiRecordHead(FileStream fs, long windowStart, long floor)
+    {
+        var start = floor;
+        var chunk = new byte[PiScanChunkBytes];
+        for (var pos = windowStart; pos > floor;)
+        {
+            var n = (int)Math.Min(chunk.Length, pos - floor);
+            var at = pos - n;
+            fs.Seek(at, SeekOrigin.Begin);
+            var read = 0;
+            while (read < n)
+            {
+                var got = fs.Read(chunk, read, n - read);
+                if (got <= 0) break;
+                read += got;
+            }
+            if (read == 0) return null;
+            var nl = Array.LastIndexOf(chunk, (byte)'\n', read - 1);
+            if (nl >= 0)
+            {
+                start = at + nl + 1;
+                break;
+            }
+            pos = at;
+        }
+
+        var head = new byte[PiRecordHeadBytes];
+        fs.Seek(start, SeekOrigin.Begin);
+        var readHead = 0;
+        while (readHead < head.Length)
+        {
+            var got = fs.Read(head, readHead, head.Length - readHead);
+            if (got <= 0) break;
+            readHead += got;
+        }
+        if (readHead == 0) return null;
+        // A head cut inside a string is harmless: the fields read here come before any payload.
+        var text = Encoding.UTF8.GetString(head, 0, readHead);
+        var ts = PiHeadString(text, "\"timestamp\":");
+        return new PiRecordHead(PiHeadString(text, "\"type\":"), PiLineRole(text),
+            ts is { Length: > 0 } && DateTimeOffset.TryParse(ts, out var at2) ? at2.ToUnixTimeMilliseconds() : null);
+    }
+
+    private static string? PiHeadString(string head, string key)
+    {
+        var at = head.IndexOf(key, StringComparison.Ordinal);
+        if (at < 0) return null;
+        var value = at + key.Length;
+        while (value < head.Length && head[value] is ' ' or '\t') value++;
+        return PiJsonString(head, value);
+    }
+
+    /// <summary>
+    /// The stop reason of the record a read window starts inside: it ends an assistant record, so it is in the
+    /// record's own last bytes (the window's dropped first line) and after every payload.
+    /// </summary>
+    private static string? PiTailStopReason(byte[] bytes, int length)
+    {
+        if (length <= 0) return null;
+        var from = Math.Max(0, length - PiRecordTailBytes);
+        var text = Encoding.UTF8.GetString(bytes, from, length - from);
+        var at = text.LastIndexOf("\"stopReason\":\"", StringComparison.Ordinal);
+        return at < 0 ? null : PiJsonString(text, at + 13);
+    }
+
+    /// <summary>The string value of the JSON string literal that opens at <paramref name="quote"/>.</summary>
+    private static string? PiJsonString(string text, int quote)
+    {
+        if (quote >= text.Length || text[quote] != '"') return null;
+        for (var i = quote + 1; i < text.Length; i++)
+        {
+            if (text[i] == '\\')
+            {
+                i++;
+                continue;
+            }
+            if (text[i] != '"') continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(text[quote..(i + 1)]);
+                return doc.RootElement.GetString();
+            }
+            catch (JsonException) { return null; }
+        }
+        return null;
     }
 
     /// <summary>The session header at the start of a ragged file: its id and working directory.</summary>

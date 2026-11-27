@@ -742,6 +742,40 @@ public sealed class SessionDetailsTests : IDisposable
     }
 
     [Fact]
+    public void Pi_ErrorGrace_RunsFromTheFailedReply_NotFromTheFileWrite()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "e0e0e0e0-aaaa-bbbb-cccc-e0e0e0e0e0e0";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-30).ToString("O");
+        var failed = DateTimeOffset.UtcNow.AddMinutes(-20).ToString("O");
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        var file = WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/gone"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{failed}}}","message":{"role":"user","content":"go"}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{failed}}}","message":{"role":"assistant","stopReason":"error","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":0},"content":[]}}""" + "\n",
+            writeUtc: DateTimeOffset.UtcNow.AddMinutes(-20).UtcDateTime);
+
+        var settled = Assert.Single(monitor.ReadPi(root));
+        Assert.Equal("idle", settled.Status);
+        Assert.Equal("failed", settled.Outcome);
+
+        // a title rename rewrites the file long after the retries ended: the grace must not start over
+        File.AppendAllText(file,
+            $$$"""{"type":"session_info","timestamp":"{{{DateTimeOffset.UtcNow:O}}}","name":"renamed after a dead retry"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+
+        var renamed = Assert.Single(monitor.ReadPi(root, titles: true));
+        Assert.Equal("renamed after a dead retry", renamed.Title);
+        Assert.Equal("idle", renamed.Status);
+        Assert.Equal("failed", renamed.Outcome);
+
+        // nor does a record that writes no retry: the grace belongs to the failed reply alone
+        File.AppendAllText(file, PiMsg("bashExecution", null) + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+        Assert.Equal("failed", Assert.Single(monitor.ReadPi(root)).Outcome);
+    }
+
+    [Fact]
     public void Pi_LongRunningTurn_StaysBusyPastThreeMinutes()
     {
         var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
@@ -790,6 +824,51 @@ public sealed class SessionDetailsTests : IDisposable
     }
 
     [Fact]
+    public void Pi_AppendedTurn_InsideAHugeToolResult_KeepsTheSessionBusy()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "a2a2a2a2-aaaa-bbbb-cccc-a2a2a2a2a2a2";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-6).ToString("O");
+        var root = Path.Combine(_root, ".pi", "agent", "sessions");
+        var file = WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/appended"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"m","stopReason":"stop","usage":{"input":3,"output":2,"cacheRead":0,"cacheWrite":0,"reasoning":0,"totalTokens":5},"content":[]}}""" + "\n",
+            writeUtc: DateTimeOffset.UtcNow.AddMinutes(-6).UtcDateTime);
+
+        Assert.Equal("completed", Assert.Single(monitor.ReadPi(root)).Outcome);
+
+        // the next turn ends in a tool result bigger than the tail window, so the window starts inside it
+        var huge = new string('x', 2 * 1024 * 1024 + 1024);
+        File.AppendAllText(file,
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"user","content":"go"}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"m","stopReason":"toolUse","content":[{"type":"toolCall","name":"bash"}]}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"toolResult","toolName":"bash","content":"{{{huge}}}"}}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow);
+
+        var busy = Assert.Single(monitor.ReadPi(root));
+        Assert.Equal("busy", busy.Status);
+        Assert.Null(busy.Outcome);
+    }
+
+    [Fact]
+    public void Pi_InitialRead_InsideAHugeToolResult_IsBusy()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "a3a3a3a3-aaaa-bbbb-cccc-a3a3a3a3a3a3";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        var huge = new string('x', 2 * 1024 * 1024 + 1024);
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/first"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"m","stopReason":"toolUse","content":[{"type":"toolCall","name":"bash"}]}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"toolResult","toolName":"bash","content":"{{{huge}}}"}}""" + "\n");
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        Assert.Equal("first", s.Project);
+        Assert.Equal("busy", s.Status);
+        Assert.Null(s.Outcome);
+    }
+
+    [Fact]
     public void Pi_LargeFile_IsReadFromItsTailAndStillFindsTheSessionHeader()
     {
         var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
@@ -807,6 +886,29 @@ public sealed class SessionDetailsTests : IDisposable
         Assert.Equal("tail-model", s.Model);
         Assert.Equal("completed", s.Outcome);
         Assert.Null(s.TotalTokens);                // the middle was not read, so the counters are not claimed as complete
+    }
+
+    [Fact]
+    public void Pi_RoleLikeToolArguments_DoNotSkipOrRerouteRecords()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "b1b1b1b1-aaaa-bbbb-cccc-b1b1b1b1b1b1";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        WritePiSession(id,
+            $$$"""{"type":"session","version":3,"id":"{{{id}}}","timestamp":"{{{t0}}}","cwd":"/home/test/work/roles"}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"user","content":"go"}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"m","stopReason":"toolUse","usage":{"input":11,"output":3,"cacheRead":0,"cacheWrite":0,"reasoning":0},"content":[{"type":"toolCall","name":"write","arguments":{"role":"system","path":"x"}}]}}""" + "\n" +
+            $$$"""{"type":"message","timestamp":"{{{t0}}}","message":{"role":"assistant","model":"m","stopReason":"stop","usage":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0,"reasoning":0},"content":[{"type":"text","text":"done"},{"type":"toolCall","name":"read","arguments":{"role":"toolResult"}}]}}""" + "\n");
+
+        var s = Assert.Single(monitor.ReadPi(Path.Combine(_root, ".pi", "agent", "sessions")));
+        // an argument that mentions "system" must not skip the record it belongs to: its usage still counts
+        Assert.Equal(12, s.InputTokens);
+        Assert.Equal(5, s.OutputTokens);
+        Assert.Equal(1, s.LastInputTokens);
+        Assert.Equal("read", s.LastTool);
+        // an argument that mentions "toolResult" must not turn a finished reply into a running turn
+        Assert.Equal("idle", s.Status);
+        Assert.Equal("completed", s.Outcome);
     }
 
     [Fact]
