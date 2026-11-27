@@ -10,6 +10,12 @@ namespace PhoneBox.Agent;
 public sealed partial class AudioControl
 {
     private const int MaxAgeMs = 900;
+    // An output macOS cannot control in-process (a display's or soundbar's own volume over HDMI) is read by starting
+    // osascript, and every start registers a new app with WindowServer. At one reading a second, WindowServer's Mach port
+    // count grew until it hit its limit after a few days; WindowServer then exited and the user was logged out. Such an
+    // output cannot be set from the phone anyway, and often has no reading at all (osascript says "missing value"), so it
+    // and a failed reading are read again after 10 s, not every second.
+    private const int SlowReadMaxAgeMs = 10_000;
     private readonly Lock _lock = new();
     private readonly Func<AudioSnapshot?> _read;
     private AudioSnapshot? _cached;
@@ -22,10 +28,14 @@ public sealed partial class AudioControl
     private readonly Func<int, int?>? _set; // the level reached, or null when the write failed
     private readonly Func<bool>? _toggleMute;
 
-    public AudioControl() : this(Read, null, null) { }
+    // only macOS reads through osascript; on Linux a missing reading is a sink that is briefly gone and is retried at once
+    private readonly bool _slowReadsForUncontrollable;
+
+    public AudioControl() : this(Read, null, null, OperatingSystem.IsMacOS()) { }
 
     /// <summary>For tests: a fake reader (and optionally setter and mute toggle) instead of osascript / wpctl / pactl.</summary>
-    internal AudioControl(Func<AudioSnapshot?> read, Func<int, int?>? set = null, Func<bool>? toggleMute = null) { _read = read; _set = set; _toggleMute = toggleMute; }
+    internal AudioControl(Func<AudioSnapshot?> read, Func<int, int?>? set = null, Func<bool>? toggleMute = null, bool slowReadsForUncontrollable = false)
+    { _read = read; _set = set; _toggleMute = toggleMute; _slowReadsForUncontrollable = slowReadsForUncontrollable; }
 
     internal bool Refreshing => Volatile.Read(ref _refreshing) == 1;
 
@@ -37,7 +47,9 @@ public sealed partial class AudioControl
     {
         long at; AudioSnapshot? cached;
         lock (_lock) { at = _at; cached = _cached; }
-        if (Environment.TickCount64 - at >= MaxAgeMs && Interlocked.CompareExchange(ref _refreshing, 1, 0) == 0)
+        var maxAge = _slowReadsForUncontrollable && cached is not { CanControl: true } ? SlowReadMaxAgeMs : MaxAgeMs;
+        // at == 0 is "never read or invalidated", not a time: soon after boot the uptime clock is below maxAge
+        if ((at == 0 || Environment.TickCount64 - at >= maxAge) && Interlocked.CompareExchange(ref _refreshing, 1, 0) == 0)
             _ = Task.Run(() =>
             {
                 try { var (ticket, gen) = BeginRead(); Store(ticket, gen, _read()); }
