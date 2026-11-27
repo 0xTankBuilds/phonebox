@@ -2541,10 +2541,50 @@ pager.addEventListener('touchcancel', (e) => {
   else finishSwipe(swipeLastX, swipeLastY);
 }, { passive: true });
 
+const WAKE_MS = 30_000;
+// Cap a contact without any move or release so a missed WebView up/cancel cannot hold the screen awake indefinitely.
+const TOUCH_STALE_MS = 120_000;
+const activePointers = new Map();
+const ignoredPointers = new Set();
+const activeTouchMap = new Map();
+const ignoredTouches = new Set();
+const isNavControl = (e) => !!e.target?.closest?.('#navCard, #navChip');
+function clearActiveInput() {
+  activePointers.clear();
+  ignoredPointers.clear();
+  activeTouchMap.clear();
+  ignoredTouches.clear();
+}
+function clearMousePointers() {
+  for (const [id, p] of activePointers) if (p.mouse) activePointers.delete(id);
+}
+function isTouching(now = Date.now()) {
+  for (const [id, p] of activePointers) if (now - p.at >= TOUCH_STALE_MS) activePointers.delete(id);
+  for (const [id, at] of activeTouchMap) if (now - at >= TOUCH_STALE_MS) activeTouchMap.delete(id);
+  return activePointers.size > 0 || activeTouchMap.size > 0;
+}
+const extendWake = (now = Date.now()) => { wakeUntil = Math.max(wakeUntil, now + WAKE_MS); };
+
+function wakeFromNight(now = Date.now()) {
+  extendWake(now);
+  if (darkRoom) {
+    darkRoom = false;
+    darkSince = lux !== null && lux < 3 ? now : 0;
+  }
+  setNight(false);
+}
+
+function recordInteraction(now = Date.now()) {
+  lastTouch = lastUserTouch = now;
+  if (nightOn) wakeFromNight(now);
+  else extendWake(now);
+}
+
 /** Called by the Android shell (volume keys) and by arrow keys in a desktop browser. */
 window.onAndroidKey = (k) => {
-  lastTouch = lastUserTouch = Date.now();
-  if (nightOn) { wakeUntil = Date.now() + 30_000; setNight(false); return; }
+  const wasNight = nightOn;
+  recordInteraction();
+  if (wasNight) return;
   if (!$('overview').hidden) closeOverview();
   if (k === 'next') goPage(curPage + 1 >= pages.length ? 0 : curPage + 1, true);
   else if (k === 'prev') goPage(curPage - 1 < 0 ? pages.length - 1 : curPage - 1, true);
@@ -2576,13 +2616,97 @@ window.onAndroidBack = () => {
 };
 window.addEventListener('resize', () => { buildLayout(); goPage(curPage, true); fitPageBar(); });
 
-['pointerdown', 'touchstart'].forEach((ev) => document.addEventListener(ev, (e) => {
-  if (dimmed) wakeFromDim();
-  if (e.target?.closest?.('#navCard, #navChip')) return;
-  lastTouch = lastUserTouch = Date.now();
+let lastMoveTouch = 0;
+function noteMove() {
+  if (nightOn || dimmed) return;
+  const now = Date.now();
+  if (Math.abs(now - lastMoveTouch) < 1000) return;
+  lastMoveTouch = now;
+  recordInteraction(now);
+}
+function onTouchBegin(e) {
   if (navQueue.length) { navQueue = navQueue.filter((r) => r.kind !== 'home'); pump(); }
-  if (nightOn) { wakeUntil = Date.now() + 30_000; setNight(false); }
+  recordInteraction();
+}
+window.addEventListener('pointerdown', (e) => {
+  if (dimmed) wakeFromDim();
+  const id = e.pointerId ?? 0;
+  if (isNavControl(e)) { ignoredPointers.add(id); return; }
+  ignoredPointers.delete(id);
+  activePointers.set(id, { at: Date.now(), mouse: e.pointerType === 'mouse' });
+  onTouchBegin(e);
+}, { passive: true, capture: true });
+window.addEventListener('touchstart', (e) => {
+  if (dimmed) wakeFromDim();
+  const list = e.changedTouches?.length ? e.changedTouches : e.touches;
+  const nav = isNavControl(e);
+  const now = Date.now();
+  let nonNav = false;
+  for (let i = 0; list && i < list.length; i++) {
+    const t = list[i];
+    const id = t.identifier ?? i;
+    if (nav || t.target?.closest?.('#navCard, #navChip')) {
+      ignoredTouches.add(id);
+      activeTouchMap.delete(id);
+    } else {
+      ignoredTouches.delete(id);
+      activeTouchMap.set(id, now);
+      nonNav = true;
+    }
+  }
+  if (!nonNav) return;
+  onTouchBegin(e);
+}, { passive: true, capture: true });
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'mouse' && e.buttons === 0) { clearMousePointers(); return; }
+  if (e.buttons === 0 && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+  const id = e.pointerId ?? 0;
+  if (ignoredPointers.has(id) || isNavControl(e)) return;
+  if (activePointers.has(id)) activePointers.set(id, { at: Date.now(), mouse: e.pointerType === 'mouse' });
+  noteMove();
+}, { passive: true, capture: true });
+document.documentElement.addEventListener('pointerleave', clearMousePointers, { passive: true });
+window.addEventListener('touchmove', (e) => {
+  const list = e.changedTouches?.length ? e.changedTouches : e.touches;
+  const nav = isNavControl(e);
+  const now = Date.now();
+  let movedNonNav = false;
+  for (let i = 0; list && i < list.length; i++) {
+    const id = list[i].identifier ?? i;
+    if (ignoredTouches.has(id)) continue;
+    if (activeTouchMap.has(id) || !nav) {
+      activeTouchMap.set(id, now);
+      movedNonNav = true;
+    }
+  }
+  if (movedNonNav) noteMove();
+}, { passive: true, capture: true });
+['pointerup', 'pointercancel'].forEach((ev) => window.addEventListener(ev, (e) => {
+  const id = e.pointerId ?? 0;
+  const ignored = ignoredPointers.delete(id);
+  const tracked = activePointers.delete(id);
+  if (ignored || isNavControl(e) || !tracked) return;
+  if (!nightOn) recordInteraction();
 }, { passive: true, capture: true }));
+['touchend', 'touchcancel'].forEach((ev) => window.addEventListener(ev, (e) => {
+  const ended = e.changedTouches?.length ? e.changedTouches : null;
+  let releasedNonNav = false;
+  if (ended) {
+    for (let i = 0; i < ended.length; i++) {
+      const id = ended[i].identifier ?? i;
+      const ignored = ignoredTouches.delete(id);
+      const tracked = activeTouchMap.delete(id);
+      if (!ignored && tracked && !isNavControl(e)) releasedNonNav = true;
+    }
+  } else if ((e.touches?.length ?? 0) === 0) {
+    releasedNonNav = activeTouchMap.size > 0 && !isNavControl(e);
+    activeTouchMap.clear();
+    ignoredTouches.clear();
+  }
+  if (e.touches && e.touches.length === 0) { activeTouchMap.clear(); ignoredTouches.clear(); }
+  if (releasedNonNav && !nightOn) recordInteraction();
+}, { passive: true, capture: true }));
+window.addEventListener('blur', clearActiveInput);
 
 // ---------------------------------------------------------------- clock tick & night mode
 export function parseHM(s) { const [hh, mm] = (s || '0:0').split(':').map(Number); return hh * 60 + (mm || 0); }
@@ -2612,7 +2736,7 @@ function reconcileUnreachableNight(now = new Date()) {
   const dark = darkRoom && cfg.display?.nightWhenDark === true;
   // a running rule can hold the night screen up (its "night" action): the agent's active list carries ids only, so match them against cfg.rules
   const ruleNight = (D.state?.rules || []).some((id) => (cfg.rules || []).some((r) => r.id === id && r.then === 'night'));
-  setNight((isNight(now) || dark || unreachable || ruleNight) && Date.now() > wakeUntil);
+  setNight((isNight(now) || dark || unreachable || ruleNight) && Date.now() > wakeUntil && !isTouching());
 }
 /**
  * Before widgets are built: a timer that ran out while the panel was closed rings during the build, so the night
@@ -2652,8 +2776,7 @@ window.onAndroidSensor = (kind, value) => {
   } else if (kind === 'proximity' && value === true && cfg.display?.proximityWake !== false && (nightOn || dimmed)) {
     undim();
     if (!nightOn) return;
-    wakeUntil = Date.now() + 30_000;
-    setNight(false);
+    wakeFromNight();
   }
 };
 
@@ -2722,7 +2845,10 @@ export function tick() {
   const now = new Date();
   $('nClock').textContent = fmtNightClock(now);
   $('nDate').textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
-  if (darkSince && Date.now() - darkSince > 30_000) darkRoom = true;
+  const nowMs = now.getTime();
+  const touching = isTouching(nowMs);
+  if (touching) { lastTouch = lastUserTouch = nowMs; extendWake(nowMs); }
+  if (darkSince && !touching && nowMs - Math.max(darkSince, lastUserTouch) > 30_000) darkRoom = true;
   reconcileUnreachableNight(now);
   if (!PREVIEW && idleDue() && !navQueue.some((r) => r.kind === 'home')) {
     if (curPage === homeIndex()) { closeSheet(); closeOverview(); lastNav = Date.now(); } // only a sheet to close
@@ -3000,9 +3126,13 @@ export const idle = () => appPaused || document.hidden;
 window.onAppPause = (paused) => {
   const was = idle();
   appPaused = !!paused;
+  if (appPaused) clearActiveInput();
   if (was && !idle()) wokeUp();
 };
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !appPaused) wokeUp(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearActiveInput();
+  else if (!appPaused) wokeUp();
+});
 // what the paused panel skipped is fetched at once, not at the next interval
 function wokeUp() {
   if (!online) return;
