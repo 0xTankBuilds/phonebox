@@ -20,6 +20,27 @@ W.html = {
   create(box, { o }) {
     if (o.transparent) box.classList.add('bare-html');
     const frame = h('iframe', 'html-frame');
+    // A web page by address (options.url, http or https): it loads in its own origin, so it keeps its storage and
+    // cookies (a Home Assistant dashboard needs them) yet cannot reach the panel; it may not navigate the panel away.
+    // No popups either: the app has no second window, so a link opening one would replace the panel.
+    const url = typeof o.url === 'string' && /^https?:\/\//i.test(o.url.trim()) ? o.url.trim() : '';
+    // Android 5 and 6 do not read network_security_config, which keeps a redirect from bringing someone else's page
+    // to the panel's http address, so a web page is not shown there.
+    const android = /Android (\d+)/.exec(navigator.userAgent);
+    if (url && android && Number(android[1]) < 7) {
+      box.append(h('div', 'empty', tp('A web page needs Android 7 or later')));
+      return { update() {}, destroy() {} };
+    }
+    if (url) {
+      frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
+      frame.setAttribute('allow', 'fullscreen; autoplay');
+      frame.src = url;
+      // Not clipped by the card's rounded corners: Android WebView then drops the page's own rounded clips (cards
+      // of a Home Assistant dashboard draw their graphs and blurred art as plain rectangles).
+      box.classList.add('url-html');
+      box.append(frame);
+      return { update() {}, destroy() {} };
+    }
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.srcdoc = HTML_PRELUDE + (o.html || '');

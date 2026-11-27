@@ -14,6 +14,13 @@
 - Steam library: a cover cache folder (`appcache/librarycache`) that is itself a symbolic link or junction is refused,
   like the folders below it, so covers are never served from outside Steam's cache (#684,
   [Seyamalam](https://github.com/Seyamalam)).
+- Custom HTML: **Web page address** shows a web page instead of your own HTML, such as a Home Assistant dashboard,
+  Grafana or a camera on the home network (Android 7 or later). Plain http addresses work too (the panel is now served
+  over http inside the app, so the page and its pictures are not blocked as mixed content). The page runs in its own
+  origin and keeps its sign-in, cannot reach the panel or navigate it away, and is not clipped to the card's rounded
+  corners, because Android WebView then drops the rounded corners the page draws itself. Inside the http panel an https
+  page is not a secure context, so the few pages that need `crypto.subtle` or a service worker do not work there (#619,
+  [dancho12](https://github.com/dancho12)).
 
 ## 0.9.31 — 2026-11-27
 
@@ -72,6 +79,12 @@
 - README: the Games Tab add-on's row lists its Steam store lookup (#612, [lucasaz](https://github.com/lucasaz)).
 - Development: an `.editorconfig` with the style the code already follows, and the agent builds without warnings on
   Windows (#615, [elong365](https://github.com/elong365)).
+- Custom HTML: **Web page address** shows a web page instead of your own HTML, such as a Home Assistant dashboard,
+  Grafana or a camera on the home network (Android 7 or later). Plain http addresses work too (the panel is now served over http inside
+  the app, so the page and its pictures are not blocked as mixed content). The page runs in its own origin and keeps
+  its sign-in, cannot reach the panel or navigate it away, and is not clipped to the card's rounded corners, because
+  Android WebView then drops the rounded corners the page draws itself. Inside the http panel an https page is not a
+  secure context, so the few pages that need `crypto.subtle` or a service worker do not work there (#619).
 
 ## 0.9.30 — 2026-11-25
 
