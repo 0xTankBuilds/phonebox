@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- llama-swap: a widget for the local [llama-swap](https://github.com/lewtun/llama-swap) router — which models are
+  currently loaded, the requests in flight (at most three rows, more as `+N`) with how long each has been running,
+  requests and tokens today, the generation speed (p50 tok/s) and the time of the last request. Off by default; point
+  **Settings › General › llama-swap stats** at the server (e.g. `http://127.0.0.1:8080`) to switch it on. Only the
+  counters, the version, the model names, and the id and elapsed time of each in-flight request are sent to the phone
+  — no prompts, requests or responses. An address typed without a scheme (localhost:8080) now works, an address with a path
+  keeps the path, and clearing the address stops the stream while it is open, not only at the next connection.
+  In-flight events whose id is a number, or whose data arrives as an object instead of a string, are accepted too.
+  Today's requests and tokens carry a `+` when the router's newest-999-request log is still full of today, because
+  the counts are then a lower bound (at least that many), not a total.
+
 ## 0.9.31 — 2026-11-27
 
 - Pages: a dimmed **photo background** per page, from the Photo frame's source (a folder or an Immich album). A new
@@ -250,6 +261,7 @@ widget gets larger buttons and names, and the Windows CPU temperature no longer 
 - Discord: a large widget has larger mute, deafen and other buttons, member names and avatars, readable and easy to
   hit on a phone on a stand. Sizes follow the widget's size; at the usual sizes nothing changes (#420,
   [noswear922](https://github.com/noswear922)).
+
 
 **Agent**
 - Windows: the CPU temperature from LibreHardwareMonitor no longer drops out on a busy computer. The agent waited

@@ -577,6 +577,10 @@
       's.cursor.hint': 'Show recent Cursor agent chats on the AI sessions widget (off by default). Only the last message\'s role is kept; chat text is never shown, stored or sent. Project names use the folder basename from Cursor\'s workspaceStorage.',
       's.cursor.sessions': 'Show Cursor sessions',
       's.antigravity.title': 'Antigravity sessions',
+      's.llamaswap.title': 'llama-swap stats',
+      's.llamaswap.hint': 'Show the llama-swap router on a llama-swap widget: which models are loaded, the requests in flight with their elapsed time, requests and tokens for today, and the generation speed (off by default). Only counters, model names, and the id and elapsed time of each in-flight request are sent to the phone — no prompts, requests or responses.',
+      's.llamaswap.url': 'Server address (empty = off)',
+      's.llamaswap.refresh': 'Refresh every (seconds)',
       's.antigravity.hint': 'Show recent Antigravity chats on the AI sessions widget (off by default). Only step metadata and token counters are kept; prompts, replies and tool arguments are never shown, stored or sent.',
       's.antigravity.sessions': 'Show Antigravity sessions',
       's.antigravity.shareSessionTitles': 'Show Antigravity chat titles on the phone (Antigravity draws them from the conversation)',
@@ -10483,6 +10487,8 @@
   // their English text, and anything missing simply stays English. `tc()` is the lookup the settings editor uses.
   const CATALOG = {
     el: {
+      'llama-swap': 'llama-swap',
+      'The local LLM router: which models are loaded, the requests in flight, requests and tokens for today, and the generation speed. The server address is set in Settings › General › llama-swap.': 'Ο τοπικός δρομολογητής LLM: ποια μοντέλα είναι φορτωμένα, ποιες αιτήσεις βρίσκονται εν εξελίξει, αιτήσεις και tokens για σήμερα, και η ταχύτητα παραγωγής. Η διεύθυνση του διακομιστή ρυθμίζεται στις Ρυθμίσεις › Γενικά › llama-swap.',
       'Time': 'Ώρα',
       'Personal': 'Προσωπικά',
       'Weather & sky': 'Καιρός & ουρανός',
@@ -11190,6 +11196,8 @@
       'Grok': 'Grok',
     },
     vi: {
+      'llama-swap': 'llama-swap',
+      'The local LLM router: which models are loaded, the requests in flight, requests and tokens for today, and the generation speed. The server address is set in Settings › General › llama-swap.': 'Bộ định tuyến LLM cục bộ: mô hình nào đang tải, các yêu cầu đang chạy, yêu cầu và token hôm nay, cùng tốc độ sinh. Địa chỉ máy chủ được đặt trong Cài đặt › Chung › llama-swap.',
       // Categories
       'Time': 'Thời gian',
       'Personal': 'Cá nhân',
@@ -12953,6 +12961,16 @@
       'Recent tool': 'Ferramenta recente',
       'Ping {ms} · loss {loss}%': 'Ping {ms} · perda {loss}%',
       'Up ': 'Ligado há ',
+      // llama-swap widget
+      'Set the server address in Settings › General › llama-swap.': 'Defina o endereço do servidor em Configurações › Geral › llama-swap.',
+      'llama-swap is offline.': 'llama-swap está offline.',
+      'Today': 'Hoje',
+      '{a} in / {b} out': 'entrada {a} / saída {b}',
+      'Speed': 'Velocidade',
+      'Last request': 'Última requisição',
+      'just now': 'agora mesmo',
+      'ago': 'atrás',
+      'In flight': 'Em andamento',
     },
   };
 
@@ -13115,7 +13133,8 @@
       'Ask before starting (tap a game twice)': 'Спрашивать перед запуском (нажать на игру дважды)',
     },
     el: {
-      'Steam friends': 'Φίλοι στο Steam',
+      'Steam friends': 'Φίλοι Steam',
+      'The local LLM router: which models are loaded, the requests in flight, requests and tokens for today, and the generation speed. The server address is set in Settings › General › llama-swap.': 'Ο τοπικός δρομολογητής LLM: ποια μοντέλα είναι φορτωμένα, ποιες αιτήσεις βρίσκονται εν εξελίξει, αιτήσεις και tokens για σήμερα, και η ταχύτητα παραγωγής. Η διεύθυνση του διακομιστή ρυθμίζεται στις Ρυθμίσεις › Γενικά › llama-swap.',
       "See friends' avatars, online state, last seen time and current game (needs a Steam Web API key; see docs/STEAM.md).": 'Δες τα avatar, την κατάσταση σύνδεσης, την τελευταία παρουσία και το τρέχον παιχνίδι των φίλων σου (απαιτείται κλειδί Steam Web API· δες docs/STEAM.md).',
       'Show offline friends': 'Εμφάνιση φίλων εκτός σύνδεσης',
       'Steam friend activity': 'Δραστηριότητα φίλων Steam',
@@ -13129,7 +13148,8 @@
       'Ask before starting (tap a game twice)': 'Ερώτηση πριν την εκκίνηση (πάτημα δύο φορές σε ένα παιχνίδι)',
     },
     vi: {
-      'Steam friends': 'Bạn bè trên Steam',
+      'Steam friends': 'Bạn bè Steam',
+      'The local LLM router: which models are loaded, the requests in flight, requests and tokens for today, and the generation speed. The server address is set in Settings › General › llama-swap.': 'Bộ định tuyến LLM cục bộ: mô hình nào đang tải, các yêu cầu đang chạy, yêu cầu và token hôm nay, cùng tốc độ sinh. Địa chỉ máy chủ được đặt trong Cài đặt › Chung › llama-swap.',
       "See friends' avatars, online state, last seen time and current game (needs a Steam Web API key; see docs/STEAM.md).": 'Xem ảnh đại diện, trạng thái trực tuyến, lần hoạt động gần nhất và trò chơi hiện tại của bạn bè (cần khóa Steam Web API; xem docs/STEAM.md).',
       'Show offline friends': 'Hiển thị bạn bè ngoại tuyến',
       'Steam friend activity': 'Hoạt động bạn bè trên Steam',

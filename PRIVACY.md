@@ -4,7 +4,7 @@ PhoneBox has no accounts, no servers of its own, no telemetry, no analytics and 
 receives any data from you. This page lists every place the agent (on your computer) and the Android app (on your
 phone) connect to, so you can see exactly what leaves your machine and turn it off.
 
-Last updated: 2026-11-26 (PhoneBox 0.9.30).
+Last updated: 2026-11-28 (PhoneBox 0.9.31).
 
 ## What stays on your devices
 
@@ -70,6 +70,16 @@ Last updated: 2026-11-26 (PhoneBox 0.9.30).
   are kept; prompts, replies, thinking and tool arguments are never shown, stored or sent. Titles reach the phone only
   while **Show Antigravity chat titles on the phone** is also on; otherwise the widget shows the project name or
   `Antigravity`. Turning the setting off stops the scan.
+- **llama-swap stats** (off by default; **Settings › General › llama-swap stats**): while a server address is set, the
+  agent asks the [llama-swap](https://github.com/lewtun/llama-swap) router you point it at (its `/api/version`,
+  `/v1/models`, `/api/metrics/stats` and `/api/metrics/activity` endpoints) on a configurable interval (default:
+  every minute), and keeps its `/api/events`
+  stream open to count the requests the router is serving right now. Only the counters it returns — requests and
+  tokens today, the in-flight count (with the id of each in-flight request and how long it has
+  been running), generation speed, the loaded model names and the time of the last request — are kept for the
+  panel; prompts,
+  requests and responses are never read, stored or sent. Clearing the
+  address stops the polling and the stream.
 - **OpenCode sessions (off by default):** with Settings › General › "Show OpenCode sessions" on, the agent asks
   OpenCode's own background service — the native one, and the one inside each running WSL distro — for its recent
   sessions: the same local HTTP API the desktop app uses, authenticated with the password OpenCode wrote to
