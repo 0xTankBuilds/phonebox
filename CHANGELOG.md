@@ -138,6 +138,13 @@
   page whose widgets have no upright place is packed automatically. Pages without one look as before. Without More
   rows on a tablet, the editor's screen buttons read **Landscape** and **Upright** (#755, #758,
   [WellyngtonSantos](https://github.com/WellyngtonSantos)).
+- llama-swap: a widget for the local [llama-swap](https://github.com/mostlygeek/llama-swap) router — which models are
+  currently loaded, the requests in flight (at most three rows, more as `+N`) with how long each has been running,
+  requests and tokens today, the newest finished request's speed and the time of the last request. Off by default;
+  point **Settings › General › llama-swap stats** at the server (e.g. `http://127.0.0.1:8080`) to switch it on. Only
+  the counters, the version, the loaded model names, and the id, model and elapsed time of each in-flight request are
+  sent to the phone — no prompts, requests, responses, request paths or response sizes (#768,
+  [0xTankBuilds](https://github.com/0xTankBuilds)).
 
 ## 0.9.32 — 2026-11-27
 
