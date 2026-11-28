@@ -11,6 +11,8 @@ internal sealed class MqttTestBroker : IDisposable
     public int Port { get; }
     public List<string> ClientIds { get; } = [];
     public List<(string? User, string? Password)> Logins { get; } = [];
+    /// <summary>Accepts every login and then disconnects the client at once (a duplicate client id, an access list that kicks).</summary>
+    public volatile bool DropClients;
 
     private MqttTestBroker(MqttServer server, int port) { _server = server; Port = port; }
 
@@ -32,6 +34,10 @@ internal sealed class MqttTestBroker : IDisposable
                 if (user is not null && (e.UserName != user || e.Password != password)) e.ReasonCode = MqttConnectReasonCode.BadUserNameOrPassword;
                 return Task.CompletedTask;
             };
+            server.ClientConnectedAsync += async e =>
+            {
+                if (broker.DropClients) await server.DisconnectClientAsync(e.ClientId, MqttDisconnectReasonCode.AdministrativeAction);
+            };
             try { await server.StartAsync(); return broker; }
             catch (Exception) when (attempt < 10) { server.Dispose(); } // the port was taken in between
         }
@@ -40,7 +46,15 @@ internal sealed class MqttTestBroker : IDisposable
     /// <summary>A port no other fixture of this run has been given (the HTTP fixtures share the same list).</summary>
     public static int FreePort() => TestPorts.Reserve();
 
-    public void Dispose() { try { _server.StopAsync().GetAwaiter().GetResult(); } catch { } _server.Dispose(); }
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return; // a test may stop the broker itself and let "using" dispose it again
+        _disposed = true;
+        try { _server.StopAsync().GetAwaiter().GetResult(); } catch { }
+        _server.Dispose();
+    }
 
     /// <summary>A certificate for 127.0.0.1 / localhost (or another name), self-signed or signed by <paramref name="issuer"/>.</summary>
     public static X509Certificate2 Certificate(string name = "localhost", X509Certificate2? issuer = null, bool authority = false, string usage = "1.3.6.1.5.5.7.3.1")
