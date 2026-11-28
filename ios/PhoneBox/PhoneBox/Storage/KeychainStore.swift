@@ -1,4 +1,5 @@
 import Foundation
+import PhoneBoxKit
 import Security
 
 enum KeychainError: LocalizedError {
@@ -12,13 +13,15 @@ enum KeychainError: LocalizedError {
     }
 }
 
-/// The only place the pairing token is written. A generic-password item, available after the first unlock and
-/// never migrated to another device by a backup.
+/// The only place pairing tokens are written. One generic-password item holds every paired computer, available
+/// after the first unlock and never migrated to another device by a backup.
 final class KeychainStore {
     private let service = "net.oxog.phonebox.ios"
-    private let account = "paired-computer"
+    private let account = "paired-computers"
+    /// Before several computers could be paired, the one pairing lived under this account.
+    private let legacyAccount = "paired-computer"
 
-    private func baseQuery() -> [String: Any] {
+    private func query(_ account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -26,27 +29,48 @@ final class KeychainStore {
         ]
     }
 
-    func load() -> PairedComputer? {
-        var query = baseQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
+    private func read(_ account: String) -> Data? {
+        var q = query(account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return try? JSONDecoder().decode(PairedComputer.self, from: data)
+        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess else { return nil }
+        return item as? Data
     }
 
-    func save(_ computer: PairedComputer) throws {
-        let data = try JSONEncoder().encode(computer)
-        SecItemDelete(baseQuery() as CFDictionary)
-        var attributes = baseQuery()
-        attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(attributes as CFDictionary, nil)
+    /// Every paired computer, in pairing order. A pairing saved by an older version is moved over once; it stays in
+    /// its old place until the list has been written.
+    func load() -> [PairedComputer] {
+        let stored = PairingList.decode(PairedComputer.self, list: read(account), legacy: read(legacyAccount))
+        if stored.fromLegacy { try? save(stored.computers) }
+        return stored.computers
+    }
+
+    /// Replaces the stored list. The item is updated in place, so a failed write leaves the previous list intact; only
+    /// after a successful write is the pre-list item (and its token) removed.
+    func save(_ computers: [PairedComputer]) throws {
+        guard !computers.isEmpty else { try delete(); return }
+        let data = try JSONEncoder().encode(computers)
+        let update: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(query(account) as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = query(account)
+            attributes.merge(update) { _, new in new }
+            status = SecItemAdd(attributes as CFDictionary, nil)
+        }
         guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
+        SecItemDelete(query(legacyAccount) as CFDictionary)
     }
 
-    func delete() {
-        SecItemDelete(baseQuery() as CFDictionary)
+    /// Removes every stored pairing and its token. The pre-list item goes first: if it can't be removed, the list stays,
+    /// rather than leaving only the old pairing to be read back at the next launch.
+    func delete() throws {
+        for name in [legacyAccount, account] {
+            let status = SecItemDelete(query(name) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.unexpectedStatus(status) }
+        }
     }
 }

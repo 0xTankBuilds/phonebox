@@ -9,9 +9,16 @@ import WebKit
 /// and both use the native AgentClient, which adds the Bearer token and pins the certificate.
 struct PanelView: UIViewRepresentable {
     let computer: PairedComputer
+    /// The other paired computers, asked when this one stops answering.
+    let others: [PairedComputer]
+    /// The user's own pick when this is another computer: asked now and then, and returned to once it answers.
+    let preferred: PairedComputer?
     let usb: USBLink
+    let onSwitch: @MainActor (_ from: String, _ to: PairedComputer) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(computer: computer, usb: usb) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(computer: computer, others: others, preferred: preferred, usb: usb, onSwitch: onSwitch)
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         context.coordinator.makeWebView()
@@ -31,9 +38,16 @@ struct PanelView: UIViewRepresentable {
         private let bridgeKey: String
         private var webView: WKWebView?
         private var loaded = false
+        private var resumeObserver: NSObjectProtocol?
 
-        init(computer: PairedComputer, usb: USBLink) {
-            let client = AgentClient(computer: computer)
+        init(
+            computer: PairedComputer,
+            others: [PairedComputer],
+            preferred: PairedComputer?,
+            usb: USBLink,
+            onSwitch: @escaping @MainActor (_ from: String, _ to: PairedComputer) -> Void
+        ) {
+            let client = AgentClient(computer: computer, others: others, preferred: preferred, onSwitch: onSwitch)
             let key = UUID().uuidString
             self.client = client
             self.usb = usb
@@ -41,6 +55,10 @@ struct PanelView: UIViewRepresentable {
             self.proxyHandler = PanelProxyHandler(client: client, bridgeKey: key)
             self.bridgeKey = key
             super.init()
+            // iOS suspends the app in the background: failures before and after that are not one outage
+            resumeObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+            ) { [weak client] _ in client?.appResumed() }
         }
 
         func makeWebView() -> WKWebView {
@@ -89,6 +107,8 @@ struct PanelView: UIViewRepresentable {
         }
 
         func shutdown() {
+            if let resumeObserver { NotificationCenter.default.removeObserver(resumeObserver) }
+            resumeObserver = nil
             usb.stop()
             client.invalidate()
             webView?.stopLoading()
