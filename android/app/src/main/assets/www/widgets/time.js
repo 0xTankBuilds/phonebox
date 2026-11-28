@@ -334,22 +334,29 @@ W.checklist = {
     const key = `cl:${page.id}/${w.id}`;
     const day = () => new Date().toDateString();
     let st = store.get(key, null) || { day: day(), done: [] };
+    // Done used to be the item texts, so two rows with the same text toggled together. It is now the row
+    // indexes, so each row is its own task. A stored list of texts keeps showing what it showed before: every
+    // row whose text is in it stays ticked (both "Stretch" rows, when "Stretch" was ticked).
+    if (st.done.some((x) => typeof x === 'string')) {
+      const texts = new Set(st.done.filter((x) => typeof x === 'string'));
+      st.done = items.map((it, i) => (texts.has(it) ? i : -1)).filter((i) => i >= 0);
+    }
     const fresh = () => { if (o.daily !== false && st.day !== day()) st = { day: day(), done: [] }; };
     const head = h('span', 'w-sub');
     const list = h('div', 'cl-list');
     box.append(h('div', 'w-title', o.title || t('time.today'), head), list);
     const render = () => {
       fresh();
-      const n = items.filter((x) => st.done.includes(x)).length;
+      const n = items.filter((_, i) => st.done.includes(i)).length;
       head.textContent = `${n} / ${items.length}`;
       box.classList.toggle('all', n === items.length && n > 0);
-      list.replaceChildren(...items.map((it) => {
-        const done = st.done.includes(it);
+      list.replaceChildren(...items.map((it, i) => {
+        const done = st.done.includes(i);
         const row = h('button', 'cl-i' + (done ? ' done' : ''), h('span', 'cl-box', done ? icon('check') : ''), h('span', 'cl-t', it));
         row.addEventListener('click', () => {
           haptic();
           fresh();
-          st.done = st.done.includes(it) ? st.done.filter((x) => x !== it) : [...st.done, it];
+          st.done = st.done.includes(i) ? st.done.filter((x) => x !== i) : [...st.done, i];
           st.day = day();
           store.set(key, st);
           render();

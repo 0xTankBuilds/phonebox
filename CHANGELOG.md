@@ -86,6 +86,9 @@
 - Docs: running the agent in a container on a QNAP NAS (Container Station), for a panel that stays on without a
   computer: a compose file, the settings through an SSH tunnel, Wi-Fi pairing and QuFirewall, and what mounting the
   Docker socket means ([docs/QNAP.md](docs/QNAP.md)) (#718, [odin-21](https://github.com/odin-21)).
+- Checklist: two rows with the same text are ticked on their own; a list ticked before this update keeps meaning the
+  same rows. Changing the list's text during a day can move today's ticks to the rows now in those places (#765,
+  [ryoaonetsuki](https://github.com/ryoaonetsuki)).
 
 ## 0.9.32 — 2026-11-27
 
